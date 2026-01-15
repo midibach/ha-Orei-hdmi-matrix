@@ -1,0 +1,100 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Orei HDMI Matrix",
+        "description": "Enter the connection details for your Orei HDMI Matrix.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "name": "Name (optional)"
+        },
+        "data_description": {
+          "host": "IP address or hostname of the matrix",
+          "port": "TCP port (default: 8000)",
+          "name": "Friendly name for this device"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the matrix. Please check the IP address and port.",
+      "unknown": "An unexpected error occurred."
+    },
+    "abort": {
+      "already_configured": "This device is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Orei Matrix Options",
+        "description": "Configure the integration options.",
+        "data": {
+          "scan_interval": "Update interval"
+        },
+        "data_description": {
+          "scan_interval": "How often to poll the device for status updates (in seconds)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "switch": {
+      "power": {
+        "name": "Power"
+      },
+      "beep": {
+        "name": "Beep"
+      },
+      "panel_lock": {
+        "name": "Panel Lock"
+      }
+    },
+    "button": {
+      "reboot": {
+        "name": "Reboot"
+      },
+      "factory_reset": {
+        "name": "Factory Reset"
+      }
+    }
+  },
+  "services": {
+    "send_command": {
+      "name": "Send Command",
+      "description": "Send a raw command to the Orei HDMI Matrix."
+    },
+    "set_routing": {
+      "name": "Set Routing",
+      "description": "Route an input source to an output."
+    },
+    "set_all_routing": {
+      "name": "Set All Routing",
+      "description": "Route all outputs to a single input source."
+    },
+    "save_preset": {
+      "name": "Save Preset",
+      "description": "Save the current routing configuration to a preset slot."
+    },
+    "recall_preset": {
+      "name": "Recall Preset",
+      "description": "Recall a previously saved routing preset."
+    },
+    "clear_preset": {
+      "name": "Clear Preset",
+      "description": "Clear a saved routing preset."
+    },
+    "cec_command": {
+      "name": "CEC Command",
+      "description": "Send a CEC command to an input or output device."
+    },
+    "copy_edid": {
+      "name": "Copy EDID",
+      "description": "Copy EDID data from an output to an input."
+    },
+    "set_logo": {
+      "name": "Set Logo",
+      "description": "Set the LCD display logo text."
+    }
+  }
+}

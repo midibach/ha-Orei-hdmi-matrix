@@ -1,0 +1,206 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Orei HDMI Matrix",
+        "description": "Enter the connection details for your Orei HDMI Matrix.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "name": "Name (optional)"
+        },
+        "data_description": {
+          "host": "IP address or hostname of the matrix",
+          "port": "TCP port (default: 8000)",
+          "name": "Friendly name for this device"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the matrix. Please check the IP address and port.",
+      "unknown": "An unexpected error occurred."
+    },
+    "abort": {
+      "already_configured": "This device is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Orei Matrix Options",
+        "description": "Configure the integration options.",
+        "data": {
+          "scan_interval": "Update interval"
+        },
+        "data_description": {
+          "scan_interval": "How often to poll the device for status updates (in seconds)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "switch": {
+      "power": {
+        "name": "Power"
+      },
+      "beep": {
+        "name": "Beep"
+      },
+      "panel_lock": {
+        "name": "Panel Lock"
+      }
+    },
+    "button": {
+      "reboot": {
+        "name": "Reboot"
+      },
+      "factory_reset": {
+        "name": "Factory Reset"
+      }
+    }
+  },
+  "services": {
+    "send_command": {
+      "name": "Send Command",
+      "description": "Send a raw command to the Orei HDMI Matrix.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Orei Matrix device to send the command to."
+        },
+        "command": {
+          "name": "Command",
+          "description": "The raw command to send."
+        }
+      }
+    },
+    "set_routing": {
+      "name": "Set Routing",
+      "description": "Route an input source to an output.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Orei Matrix device."
+        },
+        "output": {
+          "name": "Output",
+          "description": "The output number (1-8)."
+        },
+        "input": {
+          "name": "Input",
+          "description": "The input source number (1-8)."
+        }
+      }
+    },
+    "set_all_routing": {
+      "name": "Set All Routing",
+      "description": "Route all outputs to a single input source.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Orei Matrix device."
+        },
+        "input": {
+          "name": "Input",
+          "description": "The input source number (1-8) to route all outputs to."
+        }
+      }
+    },
+    "save_preset": {
+      "name": "Save Preset",
+      "description": "Save the current routing configuration to a preset slot.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Orei Matrix device."
+        },
+        "preset": {
+          "name": "Preset",
+          "description": "The preset slot number (1-8)."
+        }
+      }
+    },
+    "recall_preset": {
+      "name": "Recall Preset",
+      "description": "Recall a previously saved routing preset.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Orei Matrix device."
+        },
+        "preset": {
+          "name": "Preset",
+          "description": "The preset slot number (1-8) to recall."
+        }
+      }
+    },
+    "clear_preset": {
+      "name": "Clear Preset",
+      "description": "Clear a saved routing preset.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Orei Matrix device."
+        },
+        "preset": {
+          "name": "Preset",
+          "description": "The preset slot number (1-8) to clear."
+        }
+      }
+    },
+    "cec_command": {
+      "name": "CEC Command",
+      "description": "Send a CEC command to an input or output device.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Orei Matrix device."
+        },
+        "target_type": {
+          "name": "Target Type",
+          "description": "Whether to send the command to an input or output."
+        },
+        "target_number": {
+          "name": "Target Number",
+          "description": "The input/output number (0 for all, 1-8 for specific)."
+        },
+        "command": {
+          "name": "Command",
+          "description": "The CEC command to send."
+        }
+      }
+    },
+    "copy_edid": {
+      "name": "Copy EDID",
+      "description": "Copy EDID data from an output to an input.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Orei Matrix device."
+        },
+        "input": {
+          "name": "Input",
+          "description": "The input number to copy EDID to (0 for all, 1-8 for specific)."
+        },
+        "output": {
+          "name": "Output",
+          "description": "The output number to copy EDID from (1-4)."
+        }
+      }
+    },
+    "set_logo": {
+      "name": "Set Logo",
+      "description": "Set the LCD display logo text.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Orei Matrix device."
+        },
+        "text": {
+          "name": "Text",
+          "description": "The logo text to display (max 16 characters)."
+        }
+      }
+    }
+  }
+}

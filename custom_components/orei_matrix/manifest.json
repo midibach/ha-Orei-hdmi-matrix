@@ -1,0 +1,12 @@
+{
+  "domain": "orei_matrix",
+  "name": "Orei HDMI Matrix",
+  "codeowners": ["@your-github-username"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/your-github-username/ha-orei-matrix",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/your-github-username/ha-orei-matrix/issues",
+  "requirements": [],
+  "version": "1.0.0"
+}
