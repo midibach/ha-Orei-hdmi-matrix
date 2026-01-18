@@ -69,6 +69,10 @@ async def async_setup_entry(
     for output_num in range(1, NUM_OUTPUTS + 1):
         entities.append(OreiMatrixOutputExtAudioSwitch(coordinator, output_num))
 
+    # Output audio mute switches
+    for output_num in range(1, NUM_OUTPUTS + 1):
+        entities.append(OreiMatrixOutputAudioMuteSwitch(coordinator, output_num))
+
     async_add_entities(entities)
 
 
@@ -296,6 +300,61 @@ class OreiMatrixOutputExtAudioSwitch(OreiMatrixOutputEntity, SwitchEntity):
         self.async_write_ha_state()
         try:
             await self.coordinator.async_set_output_ext_audio(self._output_num, False)
+        except Exception:
+            self._optimistic_state = None
+            self.async_write_ha_state()
+            raise
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self._optimistic_state = None
+        super()._handle_coordinator_update()
+
+
+class OreiMatrixOutputAudioMuteSwitch(OreiMatrixOutputEntity, SwitchEntity):
+    """Output audio mute switch for Orei HDMI Matrix."""
+
+    _attr_icon = "mdi:volume-off"
+    _attr_assumed_state = False
+
+    def __init__(
+        self,
+        coordinator: OreiMatrixCoordinator,
+        output_num: int,
+    ) -> None:
+        """Initialize the switch."""
+        super().__init__(coordinator, output_num, "audio_mute", "Audio Mute")
+        self._optimistic_state: bool | None = None
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if audio is muted."""
+        if self._optimistic_state is not None:
+            return self._optimistic_state
+            
+        if self.coordinator.data is None:
+            return False
+        audio_mute = self.coordinator.data.get("output_audio_mute", {})
+        return audio_mute.get(self._output_num, False)
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Mute audio."""
+        self._optimistic_state = True
+        self.async_write_ha_state()
+        try:
+            await self.coordinator.async_set_output_audio_mute(self._output_num, True)
+        except Exception:
+            self._optimistic_state = None
+            self.async_write_ha_state()
+            raise
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Unmute audio."""
+        self._optimistic_state = False
+        self.async_write_ha_state()
+        try:
+            await self.coordinator.async_set_output_audio_mute(self._output_num, False)
         except Exception:
             self._optimistic_state = None
             self.async_write_ha_state()

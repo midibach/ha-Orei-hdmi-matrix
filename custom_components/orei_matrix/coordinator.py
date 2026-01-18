@@ -71,6 +71,7 @@ class OreiMatrixCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "output_scaler": {i: "Pass-through" for i in range(1, NUM_OUTPUTS + 1)},
             "output_hdr": {i: "Pass-through" for i in range(1, NUM_OUTPUTS + 1)},
             "output_arc": {i: False for i in range(1, NUM_OUTPUTS + 1)},
+            "output_audio_mute": {i: False for i in range(1, NUM_OUTPUTS + 1)},
             "input_edid": {i: "8K FRL12G HDR, 7.1CH" for i in range(1, NUM_INPUTS + 1)},
             "output_ext_audio": {i: True for i in range(1, NUM_OUTPUTS + 1)},
             "ext_audio_mode": "Bind to Input",
@@ -180,114 +181,58 @@ class OreiMatrixCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed(f"Error communicating with matrix: {err}") from err
 
     async def _fetch_all_data(self) -> dict[str, Any]:
-        """Fetch all data from the matrix."""
+        """Fetch all data from the matrix using single 's status!' command."""
         # Start with last known data or defaults to avoid "Unknown" flickering
         data = self._last_known_data.copy() if self._last_known_data else self._get_default_data()
 
-        # Fetch data with individual error handling - failures keep last known values
-        
-        # System status
         try:
-            data["power"] = await self.api.get_power()
+            # Single command gets everything!
+            full_status = await self.api.get_full_status()
+            
+            # Update all fields from the parsed status
+            if "power" in full_status:
+                data["power"] = full_status["power"]
+            if "beep" in full_status:
+                data["beep"] = full_status["beep"]
+            if "lock" in full_status:
+                data["lock"] = full_status["lock"]
+            
+            if full_status.get("routing"):
+                data["routing"] = full_status["routing"]
+            if full_status.get("input_status"):
+                data["input_status"].update(full_status["input_status"])
+            if full_status.get("output_status"):
+                data["output_status"].update(full_status["output_status"])
+            if full_status.get("output_hdcp"):
+                data["output_hdcp"].update(full_status["output_hdcp"])
+            if full_status.get("output_stream"):
+                data["output_stream"].update(full_status["output_stream"])
+            if full_status.get("output_scaler"):
+                data["output_scaler"].update(full_status["output_scaler"])
+            if full_status.get("output_hdr"):
+                data["output_hdr"].update(full_status["output_hdr"])
+            if full_status.get("output_arc"):
+                data["output_arc"].update(full_status["output_arc"])
+            if full_status.get("output_audio_mute"):
+                data["output_audio_mute"] = full_status["output_audio_mute"]
+            if full_status.get("input_edid"):
+                data["input_edid"].update(full_status["input_edid"])
+            if full_status.get("output_ext_audio"):
+                data["output_ext_audio"].update(full_status["output_ext_audio"])
+            if full_status.get("ext_audio_mode"):
+                data["ext_audio_mode"] = full_status["ext_audio_mode"]
+            if full_status.get("output_ext_audio_source"):
+                data["output_ext_audio_source"].update(full_status["output_ext_audio_source"])
+            
+            # Store IP/network info for device info
+            if full_status.get("mac_address"):
+                self._device_info["mac_address"] = full_status["mac_address"]
+            
+            _LOGGER.debug("Fetched full status successfully")
+            
         except OreiMatrixError as err:
-            _LOGGER.debug("Failed to get power state: %s", err)
-
-        try:
-            data["beep"] = await self.api.get_beep()
-        except OreiMatrixError as err:
-            _LOGGER.debug("Failed to get beep state: %s", err)
-
-        try:
-            data["lock"] = await self.api.get_lock()
-        except OreiMatrixError as err:
-            _LOGGER.debug("Failed to get lock state: %s", err)
-
-        # Routing - critical, try harder
-        try:
-            routing = await self.api.get_output_source(0)
-            if routing:
-                data["routing"] = routing
-        except OreiMatrixError as err:
-            _LOGGER.debug("Failed to get routing: %s", err)
-
-        # Connection status
-        try:
-            input_status = await self.api.get_input_status(0)
-            if input_status:
-                data["input_status"].update(input_status)
-        except OreiMatrixError as err:
-            _LOGGER.debug("Failed to get input status: %s", err)
-
-        try:
-            output_status = await self.api.get_output_status(0)
-            if output_status:
-                data["output_status"].update(output_status)
-        except OreiMatrixError as err:
-            _LOGGER.debug("Failed to get output status: %s", err)
-
-        # Output settings
-        try:
-            hdcp = await self.api.get_output_hdcp(0)
-            if hdcp:
-                data["output_hdcp"].update(hdcp)
-        except OreiMatrixError as err:
-            _LOGGER.debug("Failed to get HDCP settings: %s", err)
-
-        try:
-            stream = await self.api.get_output_stream(0)
-            if stream:
-                data["output_stream"].update(stream)
-        except OreiMatrixError as err:
-            _LOGGER.debug("Failed to get stream settings: %s", err)
-
-        try:
-            scaler = await self.api.get_output_scaler(0)
-            if scaler:
-                data["output_scaler"].update(scaler)
-        except OreiMatrixError as err:
-            _LOGGER.debug("Failed to get scaler settings: %s", err)
-
-        try:
-            hdr = await self.api.get_output_hdr(0)
-            if hdr:
-                data["output_hdr"].update(hdr)
-        except OreiMatrixError as err:
-            _LOGGER.debug("Failed to get HDR settings: %s", err)
-
-        try:
-            arc = await self.api.get_output_arc(0)
-            if arc:
-                data["output_arc"].update(arc)
-        except OreiMatrixError as err:
-            _LOGGER.debug("Failed to get ARC settings: %s", err)
-
-        # EDID settings
-        try:
-            edid = await self.api.get_input_edid(0)
-            if edid:
-                data["input_edid"].update(edid)
-        except OreiMatrixError as err:
-            _LOGGER.debug("Failed to get EDID settings: %s", err)
-
-        # External audio settings
-        try:
-            ext_audio = await self.api.get_output_ext_audio(0)
-            if ext_audio:
-                data["output_ext_audio"].update(ext_audio)
-        except OreiMatrixError as err:
-            _LOGGER.debug("Failed to get ext audio settings: %s", err)
-
-        try:
-            data["ext_audio_mode"] = await self.api.get_ext_audio_mode()
-        except OreiMatrixError as err:
-            _LOGGER.debug("Failed to get ext audio mode: %s", err)
-
-        try:
-            ext_audio_source = await self.api.get_output_ext_audio_source(0)
-            if ext_audio_source:
-                data["output_ext_audio_source"].update(ext_audio_source)
-        except OreiMatrixError as err:
-            _LOGGER.debug("Failed to get ext audio sources: %s", err)
+            _LOGGER.warning("Failed to get full status: %s", err)
+            # Keep last known data
 
         self._init_complete = True
         return data
@@ -495,6 +440,16 @@ class OreiMatrixCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.api.set_output_arc(output, enable)
         except OreiMatrixError:
             self.clear_optimistic_state("output_arc", output)
+            raise
+        self.hass.async_create_task(self._delayed_refresh())
+
+    async def async_set_output_audio_mute(self, output: int, mute: bool) -> None:
+        """Set output audio mute."""
+        self.set_optimistic_state("output_audio_mute", mute, output)
+        try:
+            await self.api.set_output_audio_mute(output, mute)
+        except OreiMatrixError:
+            self.clear_optimistic_state("output_audio_mute", output)
             raise
         self.hass.async_create_task(self._delayed_refresh())
 

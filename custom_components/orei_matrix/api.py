@@ -318,17 +318,11 @@ class OreiMatrixAPI:
                 
                 _LOGGER.debug("Received response: %s", response[:200] if response else "empty")
                 
-                # Check for errors - E00 is success, E01+ are actual errors
-                # Strip E00 from response as it's just a success marker
-                if response.startswith("E00"):
-                    response = response[3:].lstrip("\r\n ")
-                elif response.startswith("E0") and len(response) > 2 and response[2].isdigit():
-                    # E01, E02, etc. are actual errors
-                    error_code = response[:3]
-                    if error_code != "E00":
-                        error_msg = f"Command error {error_code}: {response}"
-                        _LOGGER.warning(error_msg)
-                        raise OreiMatrixCommandError(error_msg)
+                # Check for errors - E00, E01, etc. are error codes
+                if response.startswith("E0"):
+                    error_msg = f"Command error: {response}"
+                    _LOGGER.warning(error_msg)
+                    raise OreiMatrixCommandError(error_msg)
                 
                 return response
                 
@@ -422,10 +416,14 @@ class OreiMatrixAPI:
 
     # ==================== System Commands ====================
 
+    async def get_full_status(self) -> dict[str, Any]:
+        """Get the full device status with all settings parsed."""
+        response = await self.send_command("s status!")
+        return self._parse_full_status(response)
+
     async def get_status(self) -> dict[str, Any]:
-        """Get the full device status."""
-        response = await self.send_command("status!")
-        return self._parse_status(response)
+        """Get the full device status (alias for get_full_status)."""
+        return await self.get_full_status()
 
     async def get_model(self) -> str:
         """Get device model."""
@@ -631,6 +629,10 @@ class OreiMatrixAPI:
         """Enable/disable output ARC."""
         await self.send_command(f"s output {output_num} arc {1 if enable else 0}!")
 
+    async def set_output_audio_mute(self, output_num: int, mute: bool) -> None:
+        """Enable/disable output audio mute."""
+        await self.send_command(f"s output {output_num} audio mute {1 if mute else 0}!")
+
     # ==================== EDID Commands ====================
 
     async def get_input_edid(self, input_num: int = 0) -> dict[int, str]:
@@ -725,10 +727,19 @@ class OreiMatrixAPI:
 
     async def get_mac_address(self) -> str:
         """Get MAC address."""
+        # Try dedicated command first
         try:
             response = await self.send_command("r mac addr!")
             match = re.search(r"([0-9A-Fa-f:]{17})", response)
-            return match.group(1) if match else ""
+            if match:
+                return match.group(1)
+        except OreiMatrixError:
+            pass
+        
+        # Fall back to getting it from full status
+        try:
+            full_status = await self.get_full_status()
+            return full_status.get("mac_address", "")
         except OreiMatrixError:
             return ""
 
@@ -770,29 +781,172 @@ class OreiMatrixAPI:
 
     # ==================== Response Parsing ====================
 
-    def _parse_status(self, response: str) -> dict[str, Any]:
-        """Parse full status response."""
+    def _parse_full_status(self, response: str) -> dict[str, Any]:
+        """Parse the comprehensive status response from 's status!' command."""
         status = {
             "power": True,
             "beep": False,
             "lock": False,
+            "lcd_time": "30 seconds",
             "routing": {},
-            "inputs": {},
-            "outputs": {},
+            "input_status": {},
+            "output_status": {},
+            "output_hdcp": {},
+            "output_stream": {},
+            "output_scaler": {},
+            "output_hdr": {},
+            "output_arc": {},
+            "output_audio_mute": {},
+            "input_edid": {},
+            "output_ext_audio": {},
+            "ext_audio_mode": "Bind to Input",
+            "output_ext_audio_source": {},
+            "ip_mode": "dhcp",
+            "ip_address": "",
+            "subnet_mask": "",
+            "gateway": "",
+            "tcp_port": "8000",
+            "telnet_port": "23",
+            "mac_address": "",
         }
         
-        lines = response.lower().split("\n")
+        lines = response.split("\n")
         for line in lines:
-            if "power on" in line:
+            line_lower = line.lower().strip()
+            
+            # System settings
+            if "power on" in line_lower:
                 status["power"] = True
-            elif "power off" in line:
+            elif "power off" in line_lower:
                 status["power"] = False
-            if "beep on" in line:
+            
+            if "beep on" in line_lower:
                 status["beep"] = True
-            if "lock on" in line:
+            elif "beep off" in line_lower:
+                status["beep"] = False
+            
+            if "panel button lock on" in line_lower or "lock on" in line_lower:
                 status["lock"] = True
+            elif "panel button lock off" in line_lower or "lock off" in line_lower:
+                status["lock"] = False
+            
+            # LCD time
+            lcd_match = re.search(r"lcd\s+on\s+(.+)", line_lower)
+            if lcd_match:
+                status["lcd_time"] = lcd_match.group(1).strip()
+            
+            # Input connection status: "hdmi input 1: sync"
+            input_match = re.search(r"hdmi\s+input\s+(\d+)\s*:\s*(\w+)", line_lower)
+            if input_match:
+                port = int(input_match.group(1))
+                state = input_match.group(2)
+                status["input_status"][port] = CONNECTION_STATUS.get(state, state.capitalize())
+            
+            # Output connection status: "hdmi output 1: connect"
+            output_match = re.search(r"hdmi\s+output\s+(\d+)\s*:\s*(\w+)", line_lower)
+            if output_match:
+                port = int(output_match.group(1))
+                state = output_match.group(2)
+                status["output_status"][port] = CONNECTION_STATUS.get(state, state.capitalize())
+            
+            # Routing: "output1->input1"
+            routing_match = re.search(r"output(\d+)\s*->\s*input(\d+)", line_lower)
+            if routing_match:
+                output = int(routing_match.group(1))
+                input_num = int(routing_match.group(2))
+                status["routing"][output] = input_num
+            
+            # HDCP: "output 1 hdcp: follow sink"
+            hdcp_match = re.search(r"output\s+(\d+)\s+hdcp\s*:\s*(.+)", line_lower)
+            if hdcp_match:
+                port = int(hdcp_match.group(1))
+                value = hdcp_match.group(2).strip()
+                status["output_hdcp"][port] = value.title()
+            
+            # Stream: "output 1 stream: enable"
+            stream_match = re.search(r"output\s+(\d+)\s+stream\s*:\s*(\w+)", line_lower)
+            if stream_match:
+                port = int(stream_match.group(1))
+                state = stream_match.group(2)
+                status["output_stream"][port] = state in ("enable", "enabled", "on")
+            
+            # Video mode (scaler): "output 1 video mode: pass-through"
+            video_match = re.search(r"output\s+(\d+)\s+video\s+mode\s*:\s*(.+)", line_lower)
+            if video_match:
+                port = int(video_match.group(1))
+                mode = video_match.group(2).strip()
+                status["output_scaler"][port] = mode.title() if mode != "pass-through" else "Pass-through"
+            
+            # HDR mode: "output 1 hdr mode: pass-through"
+            hdr_match = re.search(r"output\s+(\d+)\s+hdr\s+mode\s*:\s*(.+)", line_lower)
+            if hdr_match:
+                port = int(hdr_match.group(1))
+                mode = hdr_match.group(2).strip()
+                status["output_hdr"][port] = mode
+            
+            # ARC: "output 1 arc: on"
+            arc_match = re.search(r"output\s+(\d+)\s+arc\s*:\s*(\w+)", line_lower)
+            if arc_match:
+                port = int(arc_match.group(1))
+                state = arc_match.group(2)
+                status["output_arc"][port] = state in ("on", "enable", "enabled")
+            
+            # Audio mute: "output 1 audio mute: off"
+            mute_match = re.search(r"output\s+(\d+)\s+audio\s+mute\s*:\s*(\w+)", line_lower)
+            if mute_match:
+                port = int(mute_match.group(1))
+                state = mute_match.group(2)
+                status["output_audio_mute"][port] = state in ("on", "mute", "muted")
+            
+            # EDID: "input 1 edid:copy from output 1" or "input 1 edid:8K FRL12G HDR, 7.1CH"
+            edid_match = re.search(r"input\s+(\d+)\s+edid\s*:\s*(.+)", line, re.IGNORECASE)
+            if edid_match:
+                port = int(edid_match.group(1))
+                edid_value = edid_match.group(2).strip()
+                status["input_edid"][port] = edid_value
+            
+            # Ext audio enable: "output 1 ext-audio: enable"
+            ext_audio_match = re.search(r"output\s+(\d+)\s+ext-?audio\s*:\s*(\w+)", line_lower)
+            if ext_audio_match and "->" not in line_lower:
+                port = int(ext_audio_match.group(1))
+                state = ext_audio_match.group(2)
+                status["output_ext_audio"][port] = state in ("enable", "enabled", "on")
+            
+            # Ext audio mode: "output ext-audio mode: bind to input"
+            ext_mode_match = re.search(r"output\s+ext-?audio\s+mode\s*:\s*(.+)", line_lower)
+            if ext_mode_match:
+                status["ext_audio_mode"] = ext_mode_match.group(1).strip().title()
+            
+            # Ext audio source: "output 1 ext-audio->input1"
+            ext_src_match = re.search(r"output\s+(\d+)\s+ext-?audio\s*->\s*input(\d+)", line_lower)
+            if ext_src_match:
+                port = int(ext_src_match.group(1))
+                source = int(ext_src_match.group(2))
+                status["output_ext_audio_source"][port] = source
+            
+            # IP settings
+            if "ip mode:" in line_lower:
+                status["ip_mode"] = line_lower.split("ip mode:")[1].strip()
+            elif line_lower.startswith("ip:"):
+                status["ip_address"] = line_lower.split("ip:")[1].strip()
+            elif "subnet mask:" in line_lower:
+                status["subnet_mask"] = line_lower.split("subnet mask:")[1].strip()
+            elif "gateway:" in line_lower:
+                status["gateway"] = line_lower.split("gateway:")[1].strip()
+            elif "tcp/ip port:" in line_lower:
+                status["tcp_port"] = line_lower.split("tcp/ip port:")[1].strip()
+            elif "telnet port:" in line_lower:
+                status["telnet_port"] = line_lower.split("telnet port:")[1].strip()
+            elif "mac address:" in line_lower:
+                mac_match = re.search(r"mac\s+address\s*:\s*([0-9a-f:]+)", line_lower)
+                if mac_match:
+                    status["mac_address"] = mac_match.group(1)
         
         return status
+
+    def _parse_status(self, response: str) -> dict[str, Any]:
+        """Parse full status response (legacy alias)."""
+        return self._parse_full_status(response)
 
     def _parse_link_status(self, response: str, port_type: str) -> dict[int, str]:
         """Parse link status response."""
