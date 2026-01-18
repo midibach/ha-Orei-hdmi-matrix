@@ -5,11 +5,29 @@ from typing import Final
 
 DOMAIN: Final = "orei_matrix"
 
-# Connection settings
+# Connection settings - TCP
 DEFAULT_PORT: Final = 8000
-DEFAULT_TIMEOUT: Final = 5
-DEFAULT_SCAN_INTERVAL: Final = 30
-COMMAND_DELAY: Final = 0.1
+DEFAULT_TIMEOUT: Final = 10
+DEFAULT_SCAN_INTERVAL: Final = 15  # Default polling interval
+MIN_SCAN_INTERVAL: Final = 3  # Minimum 3 seconds
+MAX_SCAN_INTERVAL: Final = 300
+COMMAND_DELAY: Final = 0.05  # 50ms between commands - aggressive but safe
+COMMAND_RETRY_DELAY: Final = 0.2  # 200ms before retry
+MAX_RETRIES: Final = 2
+
+# Connection settings - HTTP API
+DEFAULT_HTTP_PORT: Final = 80
+HTTP_TIMEOUT: Final = 10
+HTTP_API_PATH: Final = "/cgi-bin/instr"
+NAME_SYNC_INTERVAL: Final = 300  # Sync names every 5 minutes
+MAX_PORT_NAME_LENGTH: Final = 32
+
+# Optimistic update settings
+OPTIMISTIC_UPDATE_DELAY: Final = 1.0  # Seconds before reverting if no confirmation
+
+# Configuration keys
+CONF_PASSWORD: Final = "password"
+CONF_SYNC_NAMES: Final = "sync_names"
 
 # Configuration keys
 CONF_HOST: Final = "host"
@@ -203,6 +221,9 @@ SERVICE_SET_ALL_ROUTING: Final = "set_all_routing"
 SERVICE_CEC_COMMAND: Final = "cec_command"
 SERVICE_COPY_EDID: Final = "copy_edid"
 SERVICE_SET_LOGO: Final = "set_logo"
+SERVICE_SET_INPUT_NAME: Final = "set_input_name"
+SERVICE_SET_OUTPUT_NAME: Final = "set_output_name"
+SERVICE_REFRESH_NAMES: Final = "refresh_names"
 
 # Platforms
 PLATFORMS: Final = [

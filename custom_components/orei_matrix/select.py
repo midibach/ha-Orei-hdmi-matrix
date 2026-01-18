@@ -5,7 +5,7 @@ from typing import Any
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
@@ -85,22 +85,38 @@ class OreiMatrixOutputRoutingSelect(OreiMatrixOutputEntity, SelectEntity):
         """Initialize the select."""
         super().__init__(coordinator, output_num, "routing", "Source")
         self._attr_options = [f"Input {i}" for i in range(1, NUM_INPUTS + 1)]
+        self._optimistic_option: str | None = None
 
     @property
     def current_option(self) -> str | None:
         """Return the current selected option."""
+        if self._optimistic_option is not None:
+            return self._optimistic_option
+            
         if self.coordinator.data is None:
-            return None
+            return f"Input {self._output_num}"  # Default 1:1 mapping
         routing = self.coordinator.data.get("routing", {})
-        input_num = routing.get(self._output_num)
-        if input_num:
-            return f"Input {input_num}"
-        return None
+        input_num = routing.get(self._output_num, self._output_num)
+        return f"Input {input_num}"
 
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
+        self._optimistic_option = option
+        self.async_write_ha_state()
+        
         input_num = int(option.replace("Input ", ""))
-        await self.coordinator.async_set_output_source(self._output_num, input_num)
+        try:
+            await self.coordinator.async_set_output_source(self._output_num, input_num)
+        except Exception:
+            self._optimistic_option = None
+            self.async_write_ha_state()
+            raise
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self._optimistic_option = None
+        super()._handle_coordinator_update()
 
 
 class OreiMatrixOutputHdcpSelect(OreiMatrixOutputEntity, SelectEntity):
@@ -116,16 +132,21 @@ class OreiMatrixOutputHdcpSelect(OreiMatrixOutputEntity, SelectEntity):
         """Initialize the select."""
         super().__init__(coordinator, output_num, "hdcp", "HDCP")
         self._attr_options = list(HDCP_OPTIONS.values())
+        self._optimistic_option: str | None = None
 
     @property
     def current_option(self) -> str | None:
         """Return the current selected option."""
+        if self._optimistic_option is not None:
+            return self._optimistic_option
+            
         if self.coordinator.data is None:
-            return None
+            return "Follow Sink"
         hdcp_settings = self.coordinator.data.get("output_hdcp", {})
-        hdcp_value = hdcp_settings.get(self._output_num)
-        if hdcp_value:
-            # Try to match the response to our options
+        hdcp_value = hdcp_settings.get(self._output_num, "Follow Sink")
+        
+        # Try to match the response to our options
+        if isinstance(hdcp_value, str):
             hdcp_lower = hdcp_value.lower()
             for option in self._attr_options:
                 if option.lower() in hdcp_lower or hdcp_lower in option.lower():
@@ -134,8 +155,22 @@ class OreiMatrixOutputHdcpSelect(OreiMatrixOutputEntity, SelectEntity):
 
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
+        self._optimistic_option = option
+        self.async_write_ha_state()
+        
         mode = HDCP_OPTIONS_REVERSE.get(option, 3)
-        await self.coordinator.async_set_output_hdcp(self._output_num, mode)
+        try:
+            await self.coordinator.async_set_output_hdcp(self._output_num, mode)
+        except Exception:
+            self._optimistic_option = None
+            self.async_write_ha_state()
+            raise
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self._optimistic_option = None
+        super()._handle_coordinator_update()
 
 
 class OreiMatrixOutputScalerSelect(OreiMatrixOutputEntity, SelectEntity):
@@ -151,15 +186,20 @@ class OreiMatrixOutputScalerSelect(OreiMatrixOutputEntity, SelectEntity):
         """Initialize the select."""
         super().__init__(coordinator, output_num, "scaler", "Scaler")
         self._attr_options = list(SCALER_OPTIONS.values())
+        self._optimistic_option: str | None = None
 
     @property
     def current_option(self) -> str | None:
         """Return the current selected option."""
+        if self._optimistic_option is not None:
+            return self._optimistic_option
+            
         if self.coordinator.data is None:
-            return None
+            return "Pass-through"
         scaler_settings = self.coordinator.data.get("output_scaler", {})
-        scaler_value = scaler_settings.get(self._output_num)
-        if scaler_value:
+        scaler_value = scaler_settings.get(self._output_num, "Pass-through")
+        
+        if isinstance(scaler_value, str):
             scaler_lower = scaler_value.lower()
             for option in self._attr_options:
                 if option.lower() in scaler_lower or scaler_lower in option.lower():
@@ -168,8 +208,22 @@ class OreiMatrixOutputScalerSelect(OreiMatrixOutputEntity, SelectEntity):
 
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
+        self._optimistic_option = option
+        self.async_write_ha_state()
+        
         mode = SCALER_OPTIONS_REVERSE.get(option, 1)
-        await self.coordinator.async_set_output_scaler(self._output_num, mode)
+        try:
+            await self.coordinator.async_set_output_scaler(self._output_num, mode)
+        except Exception:
+            self._optimistic_option = None
+            self.async_write_ha_state()
+            raise
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self._optimistic_option = None
+        super()._handle_coordinator_update()
 
 
 class OreiMatrixOutputHdrSelect(OreiMatrixOutputEntity, SelectEntity):
@@ -185,15 +239,20 @@ class OreiMatrixOutputHdrSelect(OreiMatrixOutputEntity, SelectEntity):
         """Initialize the select."""
         super().__init__(coordinator, output_num, "hdr", "HDR Mode")
         self._attr_options = list(HDR_OPTIONS.values())
+        self._optimistic_option: str | None = None
 
     @property
     def current_option(self) -> str | None:
         """Return the current selected option."""
+        if self._optimistic_option is not None:
+            return self._optimistic_option
+            
         if self.coordinator.data is None:
-            return None
+            return "Pass-through"
         hdr_settings = self.coordinator.data.get("output_hdr", {})
-        hdr_value = hdr_settings.get(self._output_num)
-        if hdr_value:
+        hdr_value = hdr_settings.get(self._output_num, "Pass-through")
+        
+        if isinstance(hdr_value, str):
             hdr_lower = hdr_value.lower()
             for option in self._attr_options:
                 if option.lower() in hdr_lower or hdr_lower in option.lower():
@@ -202,8 +261,22 @@ class OreiMatrixOutputHdrSelect(OreiMatrixOutputEntity, SelectEntity):
 
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
+        self._optimistic_option = option
+        self.async_write_ha_state()
+        
         mode = HDR_OPTIONS_REVERSE.get(option, 1)
-        await self.coordinator.async_set_output_hdr(self._output_num, mode)
+        try:
+            await self.coordinator.async_set_output_hdr(self._output_num, mode)
+        except Exception:
+            self._optimistic_option = None
+            self.async_write_ha_state()
+            raise
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self._optimistic_option = None
+        super()._handle_coordinator_update()
 
 
 class OreiMatrixInputEdidSelect(OreiMatrixInputEntity, SelectEntity):
@@ -219,29 +292,25 @@ class OreiMatrixInputEdidSelect(OreiMatrixInputEntity, SelectEntity):
         """Initialize the select."""
         super().__init__(coordinator, input_num, "edid", "EDID")
         self._attr_options = list(EDID_OPTIONS.values())
+        self._optimistic_option: str | None = None
 
     @property
     def current_option(self) -> str | None:
         """Return the current selected option."""
+        if self._optimistic_option is not None:
+            return self._optimistic_option
+            
         if self.coordinator.data is None:
-            return None
+            return "8K FRL12G HDR, 7.1CH"
         edid_settings = self.coordinator.data.get("input_edid", {})
-        edid_value = edid_settings.get(self._input_num)
-        if edid_value:
+        edid_value = edid_settings.get(self._input_num, "8K FRL12G HDR, 7.1CH")
+        
+        if isinstance(edid_value, str):
             # Try to find matching option
-            edid_normalized = edid_value.replace("_", " ").replace(",", ", ")
-            for option in self._attr_options:
-                if self._normalize_edid(option) == self._normalize_edid(edid_normalized):
-                    return option
-            # Fallback - try partial match
             for option in self._attr_options:
                 if self._edid_match(option, edid_value):
                     return option
         return "8K FRL12G HDR, 7.1CH"
-
-    def _normalize_edid(self, value: str) -> str:
-        """Normalize EDID string for comparison."""
-        return value.lower().replace(" ", "").replace("_", "").replace(",", "").replace(":", "")
 
     def _edid_match(self, option: str, value: str) -> bool:
         """Check if EDID values match."""
@@ -249,10 +318,28 @@ class OreiMatrixInputEdidSelect(OreiMatrixInputEntity, SelectEntity):
         value_norm = self._normalize_edid(value)
         return option_norm in value_norm or value_norm in option_norm
 
+    def _normalize_edid(self, value: str) -> str:
+        """Normalize EDID string for comparison."""
+        return value.lower().replace(" ", "").replace("_", "").replace(",", "").replace(":", "")
+
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
+        self._optimistic_option = option
+        self.async_write_ha_state()
+        
         mode = EDID_OPTIONS_REVERSE.get(option, 36)
-        await self.coordinator.async_set_input_edid(self._input_num, mode)
+        try:
+            await self.coordinator.async_set_input_edid(self._input_num, mode)
+        except Exception:
+            self._optimistic_option = None
+            self.async_write_ha_state()
+            raise
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self._optimistic_option = None
+        super()._handle_coordinator_update()
 
 
 class OreiMatrixOutputExtAudioSourceSelect(OreiMatrixOutputEntity, SelectEntity):
@@ -268,22 +355,40 @@ class OreiMatrixOutputExtAudioSourceSelect(OreiMatrixOutputEntity, SelectEntity)
         """Initialize the select."""
         super().__init__(coordinator, output_num, "ext_audio_source", "Ext Audio Source")
         self._attr_options = list(EXT_AUDIO_SOURCE_OPTIONS.values())
+        self._optimistic_option: str | None = None
 
     @property
     def current_option(self) -> str | None:
         """Return the current selected option."""
+        if self._optimistic_option is not None:
+            return self._optimistic_option
+            
         if self.coordinator.data is None:
-            return None
+            return f"Input {self._output_num}"
         source_settings = self.coordinator.data.get("output_ext_audio_source", {})
-        source = source_settings.get(self._output_num)
-        if source and source in EXT_AUDIO_SOURCE_OPTIONS:
+        source = source_settings.get(self._output_num, self._output_num)
+        if source in EXT_AUDIO_SOURCE_OPTIONS:
             return EXT_AUDIO_SOURCE_OPTIONS[source]
         return f"Input {self._output_num}"
 
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
+        self._optimistic_option = option
+        self.async_write_ha_state()
+        
         source = EXT_AUDIO_SOURCE_OPTIONS_REVERSE.get(option, self._output_num)
-        await self.coordinator.async_set_output_ext_audio_source(self._output_num, source)
+        try:
+            await self.coordinator.async_set_output_ext_audio_source(self._output_num, source)
+        except Exception:
+            self._optimistic_option = None
+            self.async_write_ha_state()
+            raise
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self._optimistic_option = None
+        super()._handle_coordinator_update()
 
 
 class OreiMatrixExtAudioModeSelect(OreiMatrixEntity, SelectEntity):
@@ -298,24 +403,44 @@ class OreiMatrixExtAudioModeSelect(OreiMatrixEntity, SelectEntity):
         """Initialize the select."""
         super().__init__(coordinator, "ext_audio_mode", "External Audio Mode")
         self._attr_options = list(EXT_AUDIO_MODE_OPTIONS.values())
+        self._optimistic_option: str | None = None
 
     @property
     def current_option(self) -> str | None:
         """Return the current selected option."""
+        if self._optimistic_option is not None:
+            return self._optimistic_option
+            
         if self.coordinator.data is None:
-            return None
+            return "Bind to Input"
         mode = self.coordinator.data.get("ext_audio_mode", "Bind to Input")
+        
         # Normalize and match
-        mode_lower = mode.lower()
-        for option in self._attr_options:
-            if option.lower() in mode_lower or mode_lower in option.lower():
-                return option
+        if isinstance(mode, str):
+            mode_lower = mode.lower()
+            for option in self._attr_options:
+                if option.lower() in mode_lower or mode_lower in option.lower():
+                    return option
         return "Bind to Input"
 
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
+        self._optimistic_option = option
+        self.async_write_ha_state()
+        
         mode = EXT_AUDIO_MODE_OPTIONS_REVERSE.get(option, 0)
-        await self.coordinator.async_set_ext_audio_mode(mode)
+        try:
+            await self.coordinator.async_set_ext_audio_mode(mode)
+        except Exception:
+            self._optimistic_option = None
+            self.async_write_ha_state()
+            raise
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self._optimistic_option = None
+        super()._handle_coordinator_update()
 
 
 class OreiMatrixLcdTimeSelect(OreiMatrixEntity, SelectEntity):

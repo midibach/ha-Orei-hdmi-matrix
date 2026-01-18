@@ -12,6 +12,8 @@ import voluptuous as vol
 
 from .api import OreiMatrixAPI, OreiMatrixConnectionError
 from .const import (
+    CONF_PASSWORD,
+    CONF_SYNC_NAMES,
     DEFAULT_PORT,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
@@ -22,10 +24,13 @@ from .const import (
     SERVICE_CLEAR_PRESET,
     SERVICE_COPY_EDID,
     SERVICE_RECALL_PRESET,
+    SERVICE_REFRESH_NAMES,
     SERVICE_SAVE_PRESET,
     SERVICE_SEND_COMMAND,
     SERVICE_SET_ALL_ROUTING,
+    SERVICE_SET_INPUT_NAME,
     SERVICE_SET_LOGO,
+    SERVICE_SET_OUTPUT_NAME,
     SERVICE_SET_ROUTING,
 )
 from .coordinator import OreiMatrixCoordinator
@@ -46,30 +51,54 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Orei HDMI Matrix from a config entry."""
     host = entry.data[CONF_HOST]
     port = entry.data.get(CONF_PORT, DEFAULT_PORT)
+    password = entry.data.get(CONF_PASSWORD, "")
     scan_interval = entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
 
-    api = OreiMatrixAPI(host, port)
+    _LOGGER.info(
+        "Setting up Orei Matrix at %s:%s with %ds scan interval",
+        host,
+        port,
+        scan_interval,
+    )
+
+    api = OreiMatrixAPI(host, port, password=password)
     
     try:
         await api.connect()
     except OreiMatrixConnectionError as err:
+        _LOGGER.error("Failed to connect to Orei Matrix at %s:%s: %s", host, port, err)
         raise ConfigEntryNotReady(f"Failed to connect to {host}:{port}") from err
 
     coordinator = OreiMatrixCoordinator(
         hass,
         api,
-        name=entry.title,
+        entry,
         scan_interval=scan_interval,
     )
 
-    # Fetch device info before first refresh
-    await coordinator.async_fetch_device_info()
+    # Fetch device info - don't fail if this errors
+    try:
+        await coordinator.async_fetch_device_info()
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.warning("Failed to fetch device info, using defaults: %s", err)
 
-    # Fetch initial data
-    await coordinator.async_config_entry_first_refresh()
+    # Fetch port names from HTTP API
+    try:
+        await coordinator.async_fetch_names()
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.warning("Failed to fetch port names, using defaults: %s", err)
+
+    # Fetch initial data - don't fail completely if some queries error
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.warning("Initial data fetch had errors, continuing: %s", err)
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
+
+    # Start periodic name sync
+    coordinator.start_name_sync()
 
     # Set up platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -80,6 +109,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Listen for options updates
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
+    _LOGGER.info("Orei Matrix integration setup complete for %s", entry.title)
+
     return True
 
 
@@ -87,6 +118,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         coordinator: OreiMatrixCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
+        coordinator.stop_name_sync()
         await coordinator.api.disconnect()
 
     # Remove services if no more entries
@@ -104,6 +136,10 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 async def async_setup_services(hass: HomeAssistant) -> None:
     """Set up services for the integration."""
     
+    # Check if services already registered
+    if hass.services.has_service(DOMAIN, SERVICE_SEND_COMMAND):
+        return
+    
     async def handle_send_command(call: ServiceCall) -> None:
         """Handle send_command service."""
         device_id = call.data["device_id"]
@@ -116,8 +152,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     async def handle_set_routing(call: ServiceCall) -> None:
         """Handle set_routing service."""
         device_id = call.data["device_id"]
-        output = call.data["output"]
-        input_source = call.data["input"]
+        output = int(call.data["output"])
+        input_source = int(call.data["input"])
         
         coordinator = await _get_coordinator_from_device_id(hass, device_id)
         if coordinator:
@@ -126,7 +162,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     async def handle_set_all_routing(call: ServiceCall) -> None:
         """Handle set_all_routing service."""
         device_id = call.data["device_id"]
-        input_source = call.data["input"]
+        input_source = int(call.data["input"])
         
         coordinator = await _get_coordinator_from_device_id(hass, device_id)
         if coordinator:
@@ -135,7 +171,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     async def handle_save_preset(call: ServiceCall) -> None:
         """Handle save_preset service."""
         device_id = call.data["device_id"]
-        preset = call.data["preset"]
+        preset = int(call.data["preset"])
         
         coordinator = await _get_coordinator_from_device_id(hass, device_id)
         if coordinator:
@@ -144,7 +180,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     async def handle_recall_preset(call: ServiceCall) -> None:
         """Handle recall_preset service."""
         device_id = call.data["device_id"]
-        preset = call.data["preset"]
+        preset = int(call.data["preset"])
         
         coordinator = await _get_coordinator_from_device_id(hass, device_id)
         if coordinator:
@@ -153,7 +189,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     async def handle_clear_preset(call: ServiceCall) -> None:
         """Handle clear_preset service."""
         device_id = call.data["device_id"]
-        preset = call.data["preset"]
+        preset = int(call.data["preset"])
         
         coordinator = await _get_coordinator_from_device_id(hass, device_id)
         if coordinator:
@@ -163,7 +199,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         """Handle cec_command service."""
         device_id = call.data["device_id"]
         target_type = call.data["target_type"]
-        target_num = call.data["target_number"]
+        target_num = int(call.data["target_number"])
         command = call.data["command"]
         
         coordinator = await _get_coordinator_from_device_id(hass, device_id)
@@ -176,8 +212,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     async def handle_copy_edid(call: ServiceCall) -> None:
         """Handle copy_edid service."""
         device_id = call.data["device_id"]
-        input_num = call.data["input"]
-        output_num = call.data["output"]
+        input_num = int(call.data["input"])
+        output_num = int(call.data["output"])
         
         coordinator = await _get_coordinator_from_device_id(hass, device_id)
         if coordinator:
@@ -212,8 +248,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         schema=vol.Schema(
             {
                 vol.Required("device_id"): str,
-                vol.Required("output"): vol.All(int, vol.Range(min=1, max=NUM_OUTPUTS)),
-                vol.Required("input"): vol.All(int, vol.Range(min=1, max=NUM_INPUTS)),
+                vol.Required("output"): vol.All(vol.Coerce(int), vol.Range(min=1, max=NUM_OUTPUTS)),
+                vol.Required("input"): vol.All(vol.Coerce(int), vol.Range(min=1, max=NUM_INPUTS)),
             }
         ),
     )
@@ -225,7 +261,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         schema=vol.Schema(
             {
                 vol.Required("device_id"): str,
-                vol.Required("input"): vol.All(int, vol.Range(min=1, max=NUM_INPUTS)),
+                vol.Required("input"): vol.All(vol.Coerce(int), vol.Range(min=1, max=NUM_INPUTS)),
             }
         ),
     )
@@ -237,7 +273,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         schema=vol.Schema(
             {
                 vol.Required("device_id"): str,
-                vol.Required("preset"): vol.All(int, vol.Range(min=1, max=NUM_PRESETS)),
+                vol.Required("preset"): vol.All(vol.Coerce(int), vol.Range(min=1, max=NUM_PRESETS)),
             }
         ),
     )
@@ -249,7 +285,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         schema=vol.Schema(
             {
                 vol.Required("device_id"): str,
-                vol.Required("preset"): vol.All(int, vol.Range(min=1, max=NUM_PRESETS)),
+                vol.Required("preset"): vol.All(vol.Coerce(int), vol.Range(min=1, max=NUM_PRESETS)),
             }
         ),
     )
@@ -261,7 +297,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         schema=vol.Schema(
             {
                 vol.Required("device_id"): str,
-                vol.Required("preset"): vol.All(int, vol.Range(min=1, max=NUM_PRESETS)),
+                vol.Required("preset"): vol.All(vol.Coerce(int), vol.Range(min=1, max=NUM_PRESETS)),
             }
         ),
     )
@@ -274,7 +310,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             {
                 vol.Required("device_id"): str,
                 vol.Required("target_type"): vol.In(["input", "output"]),
-                vol.Required("target_number"): vol.All(int, vol.Range(min=0, max=8)),
+                vol.Required("target_number"): vol.All(vol.Coerce(int), vol.Range(min=0, max=8)),
                 vol.Required("command"): str,
             }
         ),
@@ -287,8 +323,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         schema=vol.Schema(
             {
                 vol.Required("device_id"): str,
-                vol.Required("input"): vol.All(int, vol.Range(min=0, max=NUM_INPUTS)),
-                vol.Required("output"): vol.All(int, vol.Range(min=1, max=4)),
+                vol.Required("input"): vol.All(vol.Coerce(int), vol.Range(min=0, max=NUM_INPUTS)),
+                vol.Required("output"): vol.All(vol.Coerce(int), vol.Range(min=1, max=4)),
             }
         ),
     )
@@ -301,6 +337,71 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             {
                 vol.Required("device_id"): str,
                 vol.Required("text"): vol.All(str, vol.Length(max=16)),
+            }
+        ),
+    )
+
+    async def handle_set_input_name(call: ServiceCall) -> None:
+        """Handle set_input_name service."""
+        device_id = call.data["device_id"]
+        index = int(call.data["input"])
+        name = call.data["name"]
+        
+        coordinator = await _get_coordinator_from_device_id(hass, device_id)
+        if coordinator:
+            await coordinator.async_set_input_name(index, name)
+
+    async def handle_set_output_name(call: ServiceCall) -> None:
+        """Handle set_output_name service."""
+        device_id = call.data["device_id"]
+        index = int(call.data["output"])
+        name = call.data["name"]
+        
+        coordinator = await _get_coordinator_from_device_id(hass, device_id)
+        if coordinator:
+            await coordinator.async_set_output_name(index, name)
+
+    async def handle_refresh_names(call: ServiceCall) -> None:
+        """Handle refresh_names service."""
+        device_id = call.data["device_id"]
+        
+        coordinator = await _get_coordinator_from_device_id(hass, device_id)
+        if coordinator:
+            await coordinator.async_fetch_names()
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SET_INPUT_NAME,
+        handle_set_input_name,
+        schema=vol.Schema(
+            {
+                vol.Required("device_id"): str,
+                vol.Required("input"): vol.All(vol.Coerce(int), vol.Range(min=1, max=NUM_INPUTS)),
+                vol.Required("name"): vol.All(str, vol.Length(max=32)),
+            }
+        ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SET_OUTPUT_NAME,
+        handle_set_output_name,
+        schema=vol.Schema(
+            {
+                vol.Required("device_id"): str,
+                vol.Required("output"): vol.All(vol.Coerce(int), vol.Range(min=1, max=NUM_OUTPUTS)),
+                vol.Required("name"): vol.All(str, vol.Length(max=32)),
+            }
+        ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_REFRESH_NAMES,
+        handle_refresh_names,
+        schema=vol.Schema(
+            {
+                vol.Required("device_id"): str,
             }
         ),
     )
@@ -318,9 +419,13 @@ async def async_unload_services(hass: HomeAssistant) -> None:
         SERVICE_CEC_COMMAND,
         SERVICE_COPY_EDID,
         SERVICE_SET_LOGO,
+        SERVICE_SET_INPUT_NAME,
+        SERVICE_SET_OUTPUT_NAME,
+        SERVICE_REFRESH_NAMES,
     ]
     for service in services:
-        hass.services.async_remove(DOMAIN, service)
+        if hass.services.has_service(DOMAIN, service):
+            hass.services.async_remove(DOMAIN, service)
 
 
 async def _get_coordinator_from_device_id(

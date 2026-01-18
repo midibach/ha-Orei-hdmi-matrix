@@ -6,7 +6,7 @@ from typing import Any
 
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, NUM_OUTPUTS
@@ -76,6 +76,7 @@ class OreiMatrixSystemSwitch(OreiMatrixEntity, SwitchEntity):
     """System switch for Orei HDMI Matrix."""
 
     entity_description: OreiMatrixSwitchDescription
+    _attr_assumed_state = False
 
     def __init__(
         self,
@@ -85,39 +86,68 @@ class OreiMatrixSystemSwitch(OreiMatrixEntity, SwitchEntity):
         """Initialize the switch."""
         super().__init__(coordinator, description.key, description.key.replace("_", " ").title())
         self.entity_description = description
+        self._optimistic_state: bool | None = None
 
     @property
     def is_on(self) -> bool | None:
         """Return true if the switch is on."""
+        # Use optimistic state if set
+        if self._optimistic_state is not None:
+            return self._optimistic_state
+            
         if self.coordinator.data is None:
             return None
         return self.coordinator.data.get(self.entity_description.data_key, False)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the switch on."""
+        self._optimistic_state = True
+        self.async_write_ha_state()
+        
         key = self.entity_description.key
-        if key == "power":
-            await self.coordinator.async_set_power(True)
-        elif key == "beep":
-            await self.coordinator.async_set_beep(True)
-        elif key == "lock":
-            await self.coordinator.async_set_lock(True)
+        try:
+            if key == "power":
+                await self.coordinator.async_set_power(True)
+            elif key == "beep":
+                await self.coordinator.async_set_beep(True)
+            elif key == "lock":
+                await self.coordinator.async_set_lock(True)
+        except Exception:
+            self._optimistic_state = None
+            self.async_write_ha_state()
+            raise
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the switch off."""
+        self._optimistic_state = False
+        self.async_write_ha_state()
+        
         key = self.entity_description.key
-        if key == "power":
-            await self.coordinator.async_set_power(False)
-        elif key == "beep":
-            await self.coordinator.async_set_beep(False)
-        elif key == "lock":
-            await self.coordinator.async_set_lock(False)
+        try:
+            if key == "power":
+                await self.coordinator.async_set_power(False)
+            elif key == "beep":
+                await self.coordinator.async_set_beep(False)
+            elif key == "lock":
+                await self.coordinator.async_set_lock(False)
+        except Exception:
+            self._optimistic_state = None
+            self.async_write_ha_state()
+            raise
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        # Clear optimistic state when we get real data
+        self._optimistic_state = None
+        super()._handle_coordinator_update()
 
 
 class OreiMatrixOutputStreamSwitch(OreiMatrixOutputEntity, SwitchEntity):
     """Output stream switch for Orei HDMI Matrix."""
 
     _attr_icon = "mdi:video"
+    _attr_assumed_state = False
 
     def __init__(
         self,
@@ -126,28 +156,53 @@ class OreiMatrixOutputStreamSwitch(OreiMatrixOutputEntity, SwitchEntity):
     ) -> None:
         """Initialize the switch."""
         super().__init__(coordinator, output_num, "stream", "Stream")
+        self._optimistic_state: bool | None = None
 
     @property
     def is_on(self) -> bool | None:
         """Return true if the stream is enabled."""
+        if self._optimistic_state is not None:
+            return self._optimistic_state
+            
         if self.coordinator.data is None:
-            return None
+            return True  # Default to enabled
         output_stream = self.coordinator.data.get("output_stream", {})
         return output_stream.get(self._output_num, True)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Enable the stream."""
-        await self.coordinator.async_set_output_stream(self._output_num, True)
+        self._optimistic_state = True
+        self.async_write_ha_state()
+        try:
+            await self.coordinator.async_set_output_stream(self._output_num, True)
+        except Exception:
+            self._optimistic_state = None
+            self.async_write_ha_state()
+            raise
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disable the stream."""
-        await self.coordinator.async_set_output_stream(self._output_num, False)
+        self._optimistic_state = False
+        self.async_write_ha_state()
+        try:
+            await self.coordinator.async_set_output_stream(self._output_num, False)
+        except Exception:
+            self._optimistic_state = None
+            self.async_write_ha_state()
+            raise
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self._optimistic_state = None
+        super()._handle_coordinator_update()
 
 
 class OreiMatrixOutputArcSwitch(OreiMatrixOutputEntity, SwitchEntity):
     """Output ARC switch for Orei HDMI Matrix."""
 
     _attr_icon = "mdi:audio-video"
+    _attr_assumed_state = False
 
     def __init__(
         self,
@@ -156,28 +211,53 @@ class OreiMatrixOutputArcSwitch(OreiMatrixOutputEntity, SwitchEntity):
     ) -> None:
         """Initialize the switch."""
         super().__init__(coordinator, output_num, "arc", "ARC")
+        self._optimistic_state: bool | None = None
 
     @property
     def is_on(self) -> bool | None:
         """Return true if ARC is enabled."""
+        if self._optimistic_state is not None:
+            return self._optimistic_state
+            
         if self.coordinator.data is None:
-            return None
+            return False  # Default to disabled
         output_arc = self.coordinator.data.get("output_arc", {})
         return output_arc.get(self._output_num, False)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Enable ARC."""
-        await self.coordinator.async_set_output_arc(self._output_num, True)
+        self._optimistic_state = True
+        self.async_write_ha_state()
+        try:
+            await self.coordinator.async_set_output_arc(self._output_num, True)
+        except Exception:
+            self._optimistic_state = None
+            self.async_write_ha_state()
+            raise
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disable ARC."""
-        await self.coordinator.async_set_output_arc(self._output_num, False)
+        self._optimistic_state = False
+        self.async_write_ha_state()
+        try:
+            await self.coordinator.async_set_output_arc(self._output_num, False)
+        except Exception:
+            self._optimistic_state = None
+            self.async_write_ha_state()
+            raise
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self._optimistic_state = None
+        super()._handle_coordinator_update()
 
 
 class OreiMatrixOutputExtAudioSwitch(OreiMatrixOutputEntity, SwitchEntity):
     """Output external audio switch for Orei HDMI Matrix."""
 
     _attr_icon = "mdi:speaker"
+    _attr_assumed_state = False
 
     def __init__(
         self,
@@ -186,19 +266,43 @@ class OreiMatrixOutputExtAudioSwitch(OreiMatrixOutputEntity, SwitchEntity):
     ) -> None:
         """Initialize the switch."""
         super().__init__(coordinator, output_num, "ext_audio", "External Audio")
+        self._optimistic_state: bool | None = None
 
     @property
     def is_on(self) -> bool | None:
         """Return true if external audio is enabled."""
+        if self._optimistic_state is not None:
+            return self._optimistic_state
+            
         if self.coordinator.data is None:
-            return None
+            return True  # Default to enabled
         output_ext_audio = self.coordinator.data.get("output_ext_audio", {})
         return output_ext_audio.get(self._output_num, True)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Enable external audio."""
-        await self.coordinator.async_set_output_ext_audio(self._output_num, True)
+        self._optimistic_state = True
+        self.async_write_ha_state()
+        try:
+            await self.coordinator.async_set_output_ext_audio(self._output_num, True)
+        except Exception:
+            self._optimistic_state = None
+            self.async_write_ha_state()
+            raise
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disable external audio."""
-        await self.coordinator.async_set_output_ext_audio(self._output_num, False)
+        self._optimistic_state = False
+        self.async_write_ha_state()
+        try:
+            await self.coordinator.async_set_output_ext_audio(self._output_num, False)
+        except Exception:
+            self._optimistic_state = None
+            self.async_write_ha_state()
+            raise
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self._optimistic_state = None
+        super()._handle_coordinator_update()

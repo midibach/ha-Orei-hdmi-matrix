@@ -237,3 +237,71 @@ set_logo:
       example: "Matrix Switch"
       selector:
         text:
+
+set_input_name:
+  name: Set Input Name
+  description: Set a custom name for an input port on the device.
+  fields:
+    device_id:
+      name: Device
+      description: The Orei Matrix device.
+      required: true
+      selector:
+        device:
+          integration: orei_matrix
+    input:
+      name: Input
+      description: The input port number (1-8).
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 8
+          mode: box
+    name:
+      name: Name
+      description: The custom name for this input (max 32 characters).
+      required: true
+      example: "Apple TV"
+      selector:
+        text:
+
+set_output_name:
+  name: Set Output Name
+  description: Set a custom name for an output port on the device.
+  fields:
+    device_id:
+      name: Device
+      description: The Orei Matrix device.
+      required: true
+      selector:
+        device:
+          integration: orei_matrix
+    output:
+      name: Output
+      description: The output port number (1-8).
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 8
+          mode: box
+    name:
+      name: Name
+      description: The custom name for this output (max 32 characters).
+      required: true
+      example: "Living Room"
+      selector:
+        text:
+
+refresh_names:
+  name: Refresh Port Names
+  description: Refresh input and output port names from the device.
+  fields:
+    device_id:
+      name: Device
+      description: The Orei Matrix device.
+      required: true
+      selector:
+        device:
+          integration: orei_matrix

@@ -7,12 +7,14 @@
         "data": {
           "host": "Host",
           "port": "Port",
-          "name": "Name (optional)"
+          "name": "Name (optional)",
+          "password": "Admin Password (optional)"
         },
         "data_description": {
           "host": "IP address or hostname of the matrix",
           "port": "TCP port (default: 8000)",
-          "name": "Friendly name for this device"
+          "name": "Friendly name for this device",
+          "password": "Web interface admin password (leave blank if not set)"
         }
       }
     },
@@ -30,10 +32,12 @@
         "title": "Orei Matrix Options",
         "description": "Configure the integration options.",
         "data": {
-          "scan_interval": "Update interval"
+          "scan_interval": "Status update interval",
+          "sync_names": "Sync port names from device"
         },
         "data_description": {
-          "scan_interval": "How often to poll the device for status updates (in seconds)"
+          "scan_interval": "How often to poll the device for status updates (3-300 seconds). Default: 15 seconds.",
+          "sync_names": "Automatically sync input/output port names from the device's web interface."
         }
       }
     }
@@ -95,6 +99,18 @@
     "set_logo": {
       "name": "Set Logo",
       "description": "Set the LCD display logo text."
+    },
+    "set_input_name": {
+      "name": "Set Input Name",
+      "description": "Set a custom name for an input port on the device."
+    },
+    "set_output_name": {
+      "name": "Set Output Name",
+      "description": "Set a custom name for an output port on the device."
+    },
+    "refresh_names": {
+      "name": "Refresh Port Names",
+      "description": "Refresh input and output port names from the device."
     }
   }
 }

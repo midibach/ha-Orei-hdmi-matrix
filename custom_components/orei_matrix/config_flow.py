@@ -1,7 +1,6 @@
 """Config flow for Orei HDMI Matrix integration."""
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -15,25 +14,41 @@ from homeassistant.helpers import selector
 
 from .api import OreiMatrixAPI, OreiMatrixConnectionError, OreiMatrixError
 from .const import (
+    CONF_PASSWORD,
+    CONF_SYNC_NAMES,
     DEFAULT_PORT,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    MAX_SCAN_INTERVAL,
+    MIN_SCAN_INTERVAL,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 
 async def validate_connection(
-    hass: HomeAssistant, host: str, port: int
-) -> dict[str, str]:
+    hass: HomeAssistant, host: str, port: int, password: str | None = None
+) -> dict[str, Any]:
     """Validate the connection to the matrix."""
-    api = OreiMatrixAPI(host, port)
+    api = OreiMatrixAPI(host, port, password=password)
     
     try:
         await api.connect()
         model = await api.get_model()
+        
+        # Try to get names to verify HTTP API access
+        names_available = False
+        try:
+            input_names = await api.get_input_names()
+            if input_names and input_names[0] != "Input1":
+                names_available = True
+            else:
+                names_available = True  # API works even if default names
+        except Exception:
+            names_available = False
+        
         await api.disconnect()
-        return {"model": model}
+        return {"model": model, "names_available": names_available}
     except OreiMatrixConnectionError as err:
         raise ConnectionError(str(err)) from err
     except OreiMatrixError as err:
@@ -52,6 +67,7 @@ class OreiMatrixConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._host: str | None = None
         self._port: int = DEFAULT_PORT
         self._name: str | None = None
+        self._password: str | None = None
         self._model: str | None = None
 
     async def async_step_user(
@@ -62,11 +78,14 @@ class OreiMatrixConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             self._host = user_input[CONF_HOST]
-            self._port = user_input.get(CONF_PORT, DEFAULT_PORT)
+            self._port = int(user_input.get(CONF_PORT, DEFAULT_PORT))
             self._name = user_input.get(CONF_NAME)
+            self._password = user_input.get(CONF_PASSWORD) or ""
 
             try:
-                info = await validate_connection(self.hass, self._host, self._port)
+                info = await validate_connection(
+                    self.hass, self._host, self._port, self._password
+                )
                 self._model = info.get("model", "Orei Matrix")
             except ConnectionError:
                 errors["base"] = "cannot_connect"
@@ -85,9 +104,11 @@ class OreiMatrixConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data={
                         CONF_HOST: self._host,
                         CONF_PORT: self._port,
+                        CONF_PASSWORD: self._password,
                     },
                     options={
                         CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
+                        CONF_SYNC_NAMES: True,
                     },
                 )
 
@@ -108,9 +129,17 @@ class OreiMatrixConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     vol.Optional(CONF_NAME): selector.TextSelector(
                         selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT)
                     ),
+                    vol.Optional(CONF_PASSWORD, default=""): selector.TextSelector(
+                        selector.TextSelectorConfig(
+                            type=selector.TextSelectorType.PASSWORD
+                        )
+                    ),
                 }
             ),
             errors=errors,
+            description_placeholders={
+                "default_port": str(DEFAULT_PORT),
+            },
         )
 
     @staticmethod
@@ -136,24 +165,36 @@ class OreiMatrixOptionsFlowHandler(config_entries.OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
+        current_interval = self.config_entry.options.get(
+            CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
+        )
+        current_sync_names = self.config_entry.options.get(CONF_SYNC_NAMES, True)
+
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
                     vol.Optional(
                         CONF_SCAN_INTERVAL,
-                        default=self.config_entry.options.get(
-                            CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
-                        ),
+                        default=current_interval,
                     ): selector.NumberSelector(
                         selector.NumberSelectorConfig(
-                            min=5,
-                            max=300,
-                            step=5,
+                            min=MIN_SCAN_INTERVAL,
+                            max=MAX_SCAN_INTERVAL,
+                            step=1,
                             mode=selector.NumberSelectorMode.SLIDER,
                             unit_of_measurement="seconds",
                         )
                     ),
+                    vol.Optional(
+                        CONF_SYNC_NAMES,
+                        default=current_sync_names,
+                    ): selector.BooleanSelector(),
                 }
             ),
+            description_placeholders={
+                "min_interval": str(MIN_SCAN_INTERVAL),
+                "max_interval": str(MAX_SCAN_INTERVAL),
+                "default_interval": str(DEFAULT_SCAN_INTERVAL),
+            },
         )

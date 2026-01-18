@@ -6,13 +6,17 @@ from datetime import timedelta
 import logging
 from typing import Any
 
-from homeassistant.core import HomeAssistant
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import OreiMatrixAPI, OreiMatrixConnectionError, OreiMatrixError
 from .const import (
+    CONF_SYNC_NAMES,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    NAME_SYNC_INTERVAL,
     NUM_INPUTS,
     NUM_OUTPUTS,
 )
@@ -23,23 +27,87 @@ _LOGGER = logging.getLogger(__name__)
 class OreiMatrixCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Coordinator to manage fetching data from the Orei Matrix."""
 
+    config_entry: ConfigEntry
+
     def __init__(
         self,
         hass: HomeAssistant,
         api: OreiMatrixAPI,
-        name: str,
+        entry: ConfigEntry,
         scan_interval: int = DEFAULT_SCAN_INTERVAL,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
             hass,
             _LOGGER,
-            name=name,
+            name=entry.title,
             update_interval=timedelta(seconds=scan_interval),
         )
         self.api = api
+        self.config_entry = entry
         self._device_info: dict[str, Any] = {}
         self._available = True
+        self._last_known_data: dict[str, Any] = self._get_default_data()
+        self._optimistic_state: dict[str, Any] = {}
+        self._init_complete = False
+        self._name_sync_unsub: callable | None = None
+        
+        # Port names - stored separately for stability
+        self._input_names: list[str] = [f"Input {i}" for i in range(1, NUM_INPUTS + 1)]
+        self._output_names: list[str] = [f"Output {i}" for i in range(1, NUM_OUTPUTS + 1)]
+        self._names_loaded = False
+
+    def _get_default_data(self) -> dict[str, Any]:
+        """Return default data structure."""
+        return {
+            "power": True,
+            "beep": False,
+            "lock": False,
+            "routing": {i: i for i in range(1, NUM_OUTPUTS + 1)},  # Default 1:1 routing
+            "input_status": {i: "Unknown" for i in range(1, NUM_INPUTS + 1)},
+            "output_status": {i: "Unknown" for i in range(1, NUM_OUTPUTS + 1)},
+            "output_hdcp": {i: "Follow Sink" for i in range(1, NUM_OUTPUTS + 1)},
+            "output_stream": {i: True for i in range(1, NUM_OUTPUTS + 1)},
+            "output_scaler": {i: "Pass-through" for i in range(1, NUM_OUTPUTS + 1)},
+            "output_hdr": {i: "Pass-through" for i in range(1, NUM_OUTPUTS + 1)},
+            "output_arc": {i: False for i in range(1, NUM_OUTPUTS + 1)},
+            "input_edid": {i: "8K FRL12G HDR, 7.1CH" for i in range(1, NUM_INPUTS + 1)},
+            "output_ext_audio": {i: True for i in range(1, NUM_OUTPUTS + 1)},
+            "ext_audio_mode": "Bind to Input",
+            "output_ext_audio_source": {i: i for i in range(1, NUM_OUTPUTS + 1)},
+        }
+
+    @property
+    def input_names(self) -> list[str]:
+        """Return input port names."""
+        return self._input_names
+
+    @property
+    def output_names(self) -> list[str]:
+        """Return output port names."""
+        return self._output_names
+
+    def get_input_name(self, index: int) -> str:
+        """Get input name by index (1-based)."""
+        if 1 <= index <= len(self._input_names):
+            name = self._input_names[index - 1]
+            # Check if it's a default name like "Input1" or "Input 1"
+            default_patterns = [f"Input{index}", f"Input {index}", f"input{index}", f"input {index}"]
+            if name in default_patterns:
+                return f"Input {index}"
+            return name
+        return f"Input {index}"
+
+    def get_output_name(self, index: int) -> str:
+        """Get output name by index (1-based)."""
+        if 1 <= index <= len(self._output_names):
+            name = self._output_names[index - 1]
+            # Check if it's a default name like "Output1" or "Output 1"
+            default_patterns = [f"Output{index}", f"Output {index}", f"output{index}", f"output {index}"]
+            if name in default_patterns:
+                return f"Output {index}"
+            return name
+        return f"Output {index}"
 
     @property
     def available(self) -> bool:
@@ -51,120 +119,177 @@ class OreiMatrixCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return device information."""
         return self._device_info
 
+    def set_optimistic_state(self, key: str, value: Any, sub_key: int | None = None) -> None:
+        """Set optimistic state for immediate UI feedback."""
+        if sub_key is not None:
+            if key not in self._optimistic_state:
+                self._optimistic_state[key] = {}
+            self._optimistic_state[key][sub_key] = value
+        else:
+            self._optimistic_state[key] = value
+        
+        # Trigger entity updates
+        self.async_set_updated_data(self._merge_data(self._last_known_data))
+
+    def clear_optimistic_state(self, key: str, sub_key: int | None = None) -> None:
+        """Clear optimistic state after confirmation."""
+        if sub_key is not None:
+            if key in self._optimistic_state and sub_key in self._optimistic_state[key]:
+                del self._optimistic_state[key][sub_key]
+                if not self._optimistic_state[key]:
+                    del self._optimistic_state[key]
+        elif key in self._optimistic_state:
+            del self._optimistic_state[key]
+
+    def _merge_data(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Merge actual data with optimistic state."""
+        merged = data.copy()
+        
+        for key, value in self._optimistic_state.items():
+            if isinstance(value, dict) and key in merged and isinstance(merged[key], dict):
+                merged[key] = merged[key].copy()
+                merged[key].update(value)
+            else:
+                merged[key] = value
+        
+        return merged
+
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the matrix."""
         try:
             data = await self._fetch_all_data()
             self._available = True
+            self._last_known_data = data
+            
+            # Clear optimistic state since we have real data now
+            self._optimistic_state.clear()
+            
             return data
         except OreiMatrixConnectionError as err:
             self._available = False
+            _LOGGER.warning("Connection error during update: %s", err)
+            # Return last known data instead of failing completely
+            if self._last_known_data:
+                return self._last_known_data
             raise UpdateFailed(f"Connection error: {err}") from err
         except OreiMatrixError as err:
+            _LOGGER.warning("Error communicating with matrix: %s", err)
+            # Return last known data
+            if self._last_known_data:
+                return self._last_known_data
             raise UpdateFailed(f"Error communicating with matrix: {err}") from err
 
     async def _fetch_all_data(self) -> dict[str, Any]:
         """Fetch all data from the matrix."""
-        data: dict[str, Any] = {
-            "power": False,
-            "beep": False,
-            "lock": False,
-            "routing": {},
-            "input_status": {},
-            "output_status": {},
-            "output_hdcp": {},
-            "output_stream": {},
-            "output_scaler": {},
-            "output_hdr": {},
-            "output_arc": {},
-            "input_edid": {},
-            "output_ext_audio": {},
-            "ext_audio_mode": "Bind to Input",
-            "output_ext_audio_source": {},
-            "ip_config": {},
-        }
+        # Start with last known data or defaults to avoid "Unknown" flickering
+        data = self._last_known_data.copy() if self._last_known_data else self._get_default_data()
 
-        # Get basic status
+        # Fetch data with individual error handling - failures keep last known values
+        
+        # System status
         try:
             data["power"] = await self.api.get_power()
-        except OreiMatrixError:
-            _LOGGER.debug("Failed to get power state")
+        except OreiMatrixError as err:
+            _LOGGER.debug("Failed to get power state: %s", err)
 
         try:
             data["beep"] = await self.api.get_beep()
-        except OreiMatrixError:
-            _LOGGER.debug("Failed to get beep state")
+        except OreiMatrixError as err:
+            _LOGGER.debug("Failed to get beep state: %s", err)
 
         try:
             data["lock"] = await self.api.get_lock()
-        except OreiMatrixError:
-            _LOGGER.debug("Failed to get lock state")
+        except OreiMatrixError as err:
+            _LOGGER.debug("Failed to get lock state: %s", err)
 
-        # Get routing information
+        # Routing - critical, try harder
         try:
-            data["routing"] = await self.api.get_output_source(0)
-        except OreiMatrixError:
-            _LOGGER.debug("Failed to get routing")
+            routing = await self.api.get_output_source(0)
+            if routing:
+                data["routing"] = routing
+        except OreiMatrixError as err:
+            _LOGGER.debug("Failed to get routing: %s", err)
 
-        # Get connection status
+        # Connection status
         try:
-            data["input_status"] = await self.api.get_input_status(0)
-        except OreiMatrixError:
-            _LOGGER.debug("Failed to get input status")
-
-        try:
-            data["output_status"] = await self.api.get_output_status(0)
-        except OreiMatrixError:
-            _LOGGER.debug("Failed to get output status")
-
-        # Get output settings (batched to reduce polling time)
-        try:
-            data["output_hdcp"] = await self.api.get_output_hdcp(0)
-        except OreiMatrixError:
-            _LOGGER.debug("Failed to get HDCP settings")
+            input_status = await self.api.get_input_status(0)
+            if input_status:
+                data["input_status"].update(input_status)
+        except OreiMatrixError as err:
+            _LOGGER.debug("Failed to get input status: %s", err)
 
         try:
-            data["output_stream"] = await self.api.get_output_stream(0)
-        except OreiMatrixError:
-            _LOGGER.debug("Failed to get stream settings")
+            output_status = await self.api.get_output_status(0)
+            if output_status:
+                data["output_status"].update(output_status)
+        except OreiMatrixError as err:
+            _LOGGER.debug("Failed to get output status: %s", err)
+
+        # Output settings
+        try:
+            hdcp = await self.api.get_output_hdcp(0)
+            if hdcp:
+                data["output_hdcp"].update(hdcp)
+        except OreiMatrixError as err:
+            _LOGGER.debug("Failed to get HDCP settings: %s", err)
 
         try:
-            data["output_scaler"] = await self.api.get_output_scaler(0)
-        except OreiMatrixError:
-            _LOGGER.debug("Failed to get scaler settings")
+            stream = await self.api.get_output_stream(0)
+            if stream:
+                data["output_stream"].update(stream)
+        except OreiMatrixError as err:
+            _LOGGER.debug("Failed to get stream settings: %s", err)
 
         try:
-            data["output_hdr"] = await self.api.get_output_hdr(0)
-        except OreiMatrixError:
-            _LOGGER.debug("Failed to get HDR settings")
+            scaler = await self.api.get_output_scaler(0)
+            if scaler:
+                data["output_scaler"].update(scaler)
+        except OreiMatrixError as err:
+            _LOGGER.debug("Failed to get scaler settings: %s", err)
 
         try:
-            data["output_arc"] = await self.api.get_output_arc(0)
-        except OreiMatrixError:
-            _LOGGER.debug("Failed to get ARC settings")
+            hdr = await self.api.get_output_hdr(0)
+            if hdr:
+                data["output_hdr"].update(hdr)
+        except OreiMatrixError as err:
+            _LOGGER.debug("Failed to get HDR settings: %s", err)
 
-        # Get EDID settings
         try:
-            data["input_edid"] = await self.api.get_input_edid(0)
-        except OreiMatrixError:
-            _LOGGER.debug("Failed to get EDID settings")
+            arc = await self.api.get_output_arc(0)
+            if arc:
+                data["output_arc"].update(arc)
+        except OreiMatrixError as err:
+            _LOGGER.debug("Failed to get ARC settings: %s", err)
 
-        # Get external audio settings
+        # EDID settings
         try:
-            data["output_ext_audio"] = await self.api.get_output_ext_audio(0)
-        except OreiMatrixError:
-            _LOGGER.debug("Failed to get ext audio settings")
+            edid = await self.api.get_input_edid(0)
+            if edid:
+                data["input_edid"].update(edid)
+        except OreiMatrixError as err:
+            _LOGGER.debug("Failed to get EDID settings: %s", err)
+
+        # External audio settings
+        try:
+            ext_audio = await self.api.get_output_ext_audio(0)
+            if ext_audio:
+                data["output_ext_audio"].update(ext_audio)
+        except OreiMatrixError as err:
+            _LOGGER.debug("Failed to get ext audio settings: %s", err)
 
         try:
             data["ext_audio_mode"] = await self.api.get_ext_audio_mode()
-        except OreiMatrixError:
-            _LOGGER.debug("Failed to get ext audio mode")
+        except OreiMatrixError as err:
+            _LOGGER.debug("Failed to get ext audio mode: %s", err)
 
         try:
-            data["output_ext_audio_source"] = await self.api.get_output_ext_audio_source(0)
-        except OreiMatrixError:
-            _LOGGER.debug("Failed to get ext audio sources")
+            ext_audio_source = await self.api.get_output_ext_audio_source(0)
+            if ext_audio_source:
+                data["output_ext_audio_source"].update(ext_audio_source)
+        except OreiMatrixError as err:
+            _LOGGER.debug("Failed to get ext audio sources: %s", err)
 
+        self._init_complete = True
         return data
 
     async def async_fetch_device_info(self) -> None:
@@ -176,86 +301,254 @@ class OreiMatrixCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ip_config = await self.api.get_ip_config()
 
             self._device_info = {
-                "model": model,
-                "firmware_version": firmware,
+                "model": model or "Orei HDMI Matrix",
+                "firmware_version": firmware or "Unknown",
                 "mac_address": mac or ip_config.get("mac_address", ""),
                 "ip_config": ip_config,
             }
             _LOGGER.debug("Device info: %s", self._device_info)
         except OreiMatrixError as err:
             _LOGGER.warning("Failed to fetch device info: %s", err)
+            # Set defaults so the integration still works
+            self._device_info = {
+                "model": "Orei HDMI Matrix",
+                "firmware_version": "Unknown",
+                "mac_address": "",
+                "ip_config": {},
+            }
 
-    # ==================== Command Methods ====================
+    async def async_fetch_names(self) -> bool:
+        """Fetch port names from HTTP API."""
+        sync_names = self.config_entry.options.get(CONF_SYNC_NAMES, True)
+        if not sync_names:
+            _LOGGER.debug("Name sync disabled, using defaults")
+            return False
+
+        try:
+            names = await self.api.get_all_names()
+            
+            input_names = names.get("input_names", [])
+            output_names = names.get("output_names", [])
+            
+            if input_names and len(input_names) == NUM_INPUTS:
+                self._input_names = input_names
+                _LOGGER.debug("Loaded input names: %s", input_names)
+            
+            if output_names and len(output_names) == NUM_OUTPUTS:
+                self._output_names = output_names
+                _LOGGER.debug("Loaded output names: %s", output_names)
+            
+            self._names_loaded = True
+            
+            # Notify entities of name changes by triggering a data update
+            if self.data:
+                self.async_set_updated_data(self.data)
+            
+            return True
+        except Exception as err:
+            _LOGGER.warning("Failed to fetch port names: %s", err)
+            return False
+
+    def start_name_sync(self) -> None:
+        """Start periodic name sync."""
+        if self._name_sync_unsub is not None:
+            return  # Already running
+        
+        sync_names = self.config_entry.options.get(CONF_SYNC_NAMES, True)
+        if not sync_names:
+            return
+        
+        @callback
+        def _async_name_sync(now: Any = None) -> None:
+            """Trigger name sync."""
+            self.hass.async_create_task(self.async_fetch_names())
+        
+        self._name_sync_unsub = async_track_time_interval(
+            self.hass,
+            _async_name_sync,
+            timedelta(seconds=NAME_SYNC_INTERVAL),
+        )
+        _LOGGER.debug("Started name sync with %ds interval", NAME_SYNC_INTERVAL)
+
+    def stop_name_sync(self) -> None:
+        """Stop periodic name sync."""
+        if self._name_sync_unsub is not None:
+            self._name_sync_unsub()
+            self._name_sync_unsub = None
+            _LOGGER.debug("Stopped name sync")
+
+    async def async_set_input_name(self, index: int, name: str) -> bool:
+        """Set input port name."""
+        success = await self.api.set_input_name(index, name)
+        if success:
+            # Update local cache
+            if 1 <= index <= len(self._input_names):
+                self._input_names[index - 1] = name
+            # Refresh names to confirm
+            await self.async_fetch_names()
+        return success
+
+    async def async_set_output_name(self, index: int, name: str) -> bool:
+        """Set output port name."""
+        success = await self.api.set_output_name(index, name)
+        if success:
+            # Update local cache
+            if 1 <= index <= len(self._output_names):
+                self._output_names[index - 1] = name
+            # Refresh names to confirm
+            await self.async_fetch_names()
+        return success
+
+    # ==================== Command Methods with Optimistic Updates ====================
 
     async def async_set_power(self, state: bool) -> None:
         """Set power state."""
-        await self.api.set_power(state)
-        await self.async_request_refresh()
+        self.set_optimistic_state("power", state)
+        try:
+            await self.api.set_power(state)
+        except OreiMatrixError:
+            self.clear_optimistic_state("power")
+            raise
+        # Schedule refresh to confirm
+        self.hass.async_create_task(self._delayed_refresh())
 
     async def async_set_beep(self, state: bool) -> None:
         """Set beep state."""
-        await self.api.set_beep(state)
-        await self.async_request_refresh()
+        self.set_optimistic_state("beep", state)
+        try:
+            await self.api.set_beep(state)
+        except OreiMatrixError:
+            self.clear_optimistic_state("beep")
+            raise
+        self.hass.async_create_task(self._delayed_refresh())
 
     async def async_set_lock(self, state: bool) -> None:
         """Set panel lock state."""
-        await self.api.set_lock(state)
-        await self.async_request_refresh()
+        self.set_optimistic_state("lock", state)
+        try:
+            await self.api.set_lock(state)
+        except OreiMatrixError:
+            self.clear_optimistic_state("lock")
+            raise
+        self.hass.async_create_task(self._delayed_refresh())
 
     async def async_set_output_source(self, output: int, source: int) -> None:
         """Set output source."""
-        await self.api.set_output_source(output, source)
-        await self.async_request_refresh()
+        self.set_optimistic_state("routing", source, output)
+        try:
+            await self.api.set_output_source(output, source)
+        except OreiMatrixError:
+            self.clear_optimistic_state("routing", output)
+            raise
+        self.hass.async_create_task(self._delayed_refresh())
 
     async def async_set_output_hdcp(self, output: int, mode: int) -> None:
         """Set output HDCP mode."""
-        await self.api.set_output_hdcp(output, mode)
-        await self.async_request_refresh()
+        from .const import HDCP_OPTIONS
+        mode_name = HDCP_OPTIONS.get(mode, "Follow Sink")
+        self.set_optimistic_state("output_hdcp", mode_name, output)
+        try:
+            await self.api.set_output_hdcp(output, mode)
+        except OreiMatrixError:
+            self.clear_optimistic_state("output_hdcp", output)
+            raise
+        self.hass.async_create_task(self._delayed_refresh())
 
     async def async_set_output_stream(self, output: int, enable: bool) -> None:
         """Set output stream enable."""
-        await self.api.set_output_stream(output, enable)
-        await self.async_request_refresh()
+        self.set_optimistic_state("output_stream", enable, output)
+        try:
+            await self.api.set_output_stream(output, enable)
+        except OreiMatrixError:
+            self.clear_optimistic_state("output_stream", output)
+            raise
+        self.hass.async_create_task(self._delayed_refresh())
 
     async def async_set_output_scaler(self, output: int, mode: int) -> None:
         """Set output scaler mode."""
-        await self.api.set_output_scaler(output, mode)
-        await self.async_request_refresh()
+        from .const import SCALER_OPTIONS
+        mode_name = SCALER_OPTIONS.get(mode, "Pass-through")
+        self.set_optimistic_state("output_scaler", mode_name, output)
+        try:
+            await self.api.set_output_scaler(output, mode)
+        except OreiMatrixError:
+            self.clear_optimistic_state("output_scaler", output)
+            raise
+        self.hass.async_create_task(self._delayed_refresh())
 
     async def async_set_output_hdr(self, output: int, mode: int) -> None:
         """Set output HDR mode."""
-        await self.api.set_output_hdr(output, mode)
-        await self.async_request_refresh()
+        from .const import HDR_OPTIONS
+        mode_name = HDR_OPTIONS.get(mode, "Pass-through")
+        self.set_optimistic_state("output_hdr", mode_name, output)
+        try:
+            await self.api.set_output_hdr(output, mode)
+        except OreiMatrixError:
+            self.clear_optimistic_state("output_hdr", output)
+            raise
+        self.hass.async_create_task(self._delayed_refresh())
 
     async def async_set_output_arc(self, output: int, enable: bool) -> None:
         """Set output ARC enable."""
-        await self.api.set_output_arc(output, enable)
-        await self.async_request_refresh()
+        self.set_optimistic_state("output_arc", enable, output)
+        try:
+            await self.api.set_output_arc(output, enable)
+        except OreiMatrixError:
+            self.clear_optimistic_state("output_arc", output)
+            raise
+        self.hass.async_create_task(self._delayed_refresh())
 
     async def async_set_input_edid(self, input_num: int, edid_mode: int) -> None:
         """Set input EDID mode."""
-        await self.api.set_input_edid(input_num, edid_mode)
-        await self.async_request_refresh()
+        from .const import EDID_OPTIONS
+        edid_name = EDID_OPTIONS.get(edid_mode, "8K FRL12G HDR, 7.1CH")
+        self.set_optimistic_state("input_edid", edid_name, input_num)
+        try:
+            await self.api.set_input_edid(input_num, edid_mode)
+        except OreiMatrixError:
+            self.clear_optimistic_state("input_edid", input_num)
+            raise
+        self.hass.async_create_task(self._delayed_refresh())
 
     async def async_copy_edid(self, input_num: int, output_num: int) -> None:
         """Copy EDID from output to input."""
-        await self.api.copy_edid_from_output(input_num, output_num)
-        await self.async_request_refresh()
+        try:
+            await self.api.copy_edid_from_output(input_num, output_num)
+        except OreiMatrixError:
+            raise
+        self.hass.async_create_task(self._delayed_refresh())
 
     async def async_set_output_ext_audio(self, output: int, enable: bool) -> None:
         """Set output external audio enable."""
-        await self.api.set_output_ext_audio(output, enable)
-        await self.async_request_refresh()
+        self.set_optimistic_state("output_ext_audio", enable, output)
+        try:
+            await self.api.set_output_ext_audio(output, enable)
+        except OreiMatrixError:
+            self.clear_optimistic_state("output_ext_audio", output)
+            raise
+        self.hass.async_create_task(self._delayed_refresh())
 
     async def async_set_ext_audio_mode(self, mode: int) -> None:
         """Set external audio mode."""
-        await self.api.set_ext_audio_mode(mode)
-        await self.async_request_refresh()
+        from .const import EXT_AUDIO_MODE_OPTIONS
+        mode_name = EXT_AUDIO_MODE_OPTIONS.get(mode, "Bind to Input")
+        self.set_optimistic_state("ext_audio_mode", mode_name)
+        try:
+            await self.api.set_ext_audio_mode(mode)
+        except OreiMatrixError:
+            self.clear_optimistic_state("ext_audio_mode")
+            raise
+        self.hass.async_create_task(self._delayed_refresh())
 
     async def async_set_output_ext_audio_source(self, output: int, source: int) -> None:
         """Set output external audio source."""
-        await self.api.set_output_ext_audio_source(output, source)
-        await self.async_request_refresh()
+        self.set_optimistic_state("output_ext_audio_source", source, output)
+        try:
+            await self.api.set_output_ext_audio_source(output, source)
+        except OreiMatrixError:
+            self.clear_optimistic_state("output_ext_audio_source", output)
+            raise
+        self.hass.async_create_task(self._delayed_refresh())
 
     async def async_set_lcd_time(self, mode: int) -> None:
         """Set LCD on time mode."""
@@ -297,3 +590,8 @@ class OreiMatrixCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def async_send_command(self, command: str) -> str:
         """Send raw command."""
         return await self.api.send_command(command)
+
+    async def _delayed_refresh(self, delay: float = 1.0) -> None:
+        """Schedule a delayed refresh to confirm state."""
+        await asyncio.sleep(delay)
+        await self.async_request_refresh()

@@ -23,7 +23,7 @@ class OreiMatrixEntity(CoordinatorEntity[OreiMatrixCoordinator]):
         super().__init__(coordinator)
         
         self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{unique_id_suffix}"
-        self._attr_name = name
+        self._base_name = name
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, coordinator.config_entry.entry_id)},
             name=coordinator.config_entry.title,
@@ -32,6 +32,11 @@ class OreiMatrixEntity(CoordinatorEntity[OreiMatrixCoordinator]):
             sw_version=coordinator.device_info.get("firmware_version"),
             configuration_url=f"http://{coordinator.api.host}",
         )
+
+    @property
+    def name(self) -> str:
+        """Return the name of the entity."""
+        return self._base_name
 
     @property
     def available(self) -> bool:
@@ -47,15 +52,23 @@ class OreiMatrixInputEntity(OreiMatrixEntity):
         coordinator: OreiMatrixCoordinator,
         input_num: int,
         unique_id_suffix: str,
-        name: str,
+        name_suffix: str,
     ) -> None:
         """Initialize the input entity."""
+        # Use numeric ID for stability - entity_id won't change when names change
         super().__init__(
             coordinator,
             f"input_{input_num}_{unique_id_suffix}",
-            f"Input {input_num} {name}",
+            f"Input {input_num} {name_suffix}",  # Temporary, overridden by property
         )
         self._input_num = input_num
+        self._name_suffix = name_suffix
+
+    @property
+    def name(self) -> str:
+        """Return the name using device's port name."""
+        port_name = self.coordinator.get_input_name(self._input_num)
+        return f"{port_name} {self._name_suffix}"
 
 
 class OreiMatrixOutputEntity(OreiMatrixEntity):
@@ -66,12 +79,20 @@ class OreiMatrixOutputEntity(OreiMatrixEntity):
         coordinator: OreiMatrixCoordinator,
         output_num: int,
         unique_id_suffix: str,
-        name: str,
+        name_suffix: str,
     ) -> None:
         """Initialize the output entity."""
+        # Use numeric ID for stability - entity_id won't change when names change
         super().__init__(
             coordinator,
             f"output_{output_num}_{unique_id_suffix}",
-            f"Output {output_num} {name}",
+            f"Output {output_num} {name_suffix}",  # Temporary, overridden by property
         )
         self._output_num = output_num
+        self._name_suffix = name_suffix
+
+    @property
+    def name(self) -> str:
+        """Return the name using device's port name."""
+        port_name = self.coordinator.get_output_name(self._output_num)
+        return f"{port_name} {self._name_suffix}"

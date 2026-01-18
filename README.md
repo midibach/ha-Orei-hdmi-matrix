@@ -13,6 +13,12 @@ A comprehensive Home Assistant custom integration for the **Orei BK-808 8x8 HDMI
 - **Route all outputs** - Quickly route all outputs to a single input
 - **8 preset slots** - Save, recall, and clear routing presets
 
+### Port Naming (NEW)
+- **Sync names from device** - Automatically sync custom port names from the Orei web interface
+- **Set names from HA** - Change input/output names via service calls
+- **Dynamic entity names** - Entity friendly names update when port names change
+- **Stable entity IDs** - Automations never break when names change
+
 ### Output Controls
 - **HDCP mode** - HDCP 1.4, HDCP 2.2, Follow Sink, Follow Source, User Mode
 - **Scaler mode** - Pass-through, 8K→4K, 8K/4K→1080p, Auto
@@ -80,12 +86,29 @@ This integration may work with other Orei matrices that use the same command pro
 2. Click **+ Add Integration**
 3. Search for "Orei HDMI Matrix"
 4. Enter the IP address of your matrix
-5. Optionally adjust the port (default: 8000) and device name
+5. Optionally configure:
+   - **Port** - TCP port (default: 8000)
+   - **Name** - Friendly device name
+   - **Admin Password** - Web interface password (leave blank if not set)
 
 ### Options
 
 After setup, you can configure:
-- **Update interval** - How often to poll the device (5-300 seconds)
+- **Status update interval** - How often to poll the device (3-300 seconds, default: 15)
+  - Lower values = more responsive status updates but more network traffic
+  - Higher values = less network traffic but slower status sync
+- **Sync port names from device** - Automatically sync input/output names from the device's web interface (default: enabled)
+
+> **Note**: Control changes made in Home Assistant take effect immediately with optimistic updates, showing the expected state before confirmation from the device.
+
+### Port Naming
+
+The integration supports custom port names in two ways:
+
+1. **Sync from device**: Names set in the Orei web interface are automatically synced to Home Assistant
+2. **Set from Home Assistant**: Use the `set_input_name` and `set_output_name` services to change names
+
+When port names change, entity **friendly names** update automatically (e.g., "Living Room Source" instead of "Output 1 Source"), but **entity IDs** remain stable (e.g., `select.orei_matrix_output_1_source`). This means your automations never break when names change.
 
 ## Entities Created
 
@@ -218,6 +241,37 @@ data:
   output: 1
 ```
 
+### `orei_matrix.set_input_name`
+Set a custom name for an input port.
+
+```yaml
+service: orei_matrix.set_input_name
+data:
+  device_id: "your_device_id"
+  input: 1
+  name: "Apple TV"
+```
+
+### `orei_matrix.set_output_name`
+Set a custom name for an output port.
+
+```yaml
+service: orei_matrix.set_output_name
+data:
+  device_id: "your_device_id"
+  output: 1
+  name: "Living Room"
+```
+
+### `orei_matrix.refresh_names`
+Refresh port names from the device.
+
+```yaml
+service: orei_matrix.refresh_names
+data:
+  device_id: "your_device_id"
+```
+
 ## Example Automations
 
 ### Switch to Gaming PC when PS5 turns on
@@ -288,9 +342,24 @@ Ensure your matrix has a static IP address or DHCP reservation for reliable oper
 - Verify the matrix hasn't entered power saving mode
 - Review Home Assistant logs for error messages
 
+### Status cycling or flickering
+- Increase the scan interval in integration options (Settings → Devices & Services → Orei Matrix → Configure)
+- Try 30-60 seconds if you experience issues
+
+### Controls not updating when changed on the device
+- The integration polls the device periodically; changes made directly on the device will appear after the next poll
+- Decrease the scan interval for faster updates (but this increases network traffic)
+- You can also trigger a manual refresh by reloading the integration
+
+### Slow UI response
+- The integration uses optimistic updates - changes should appear immediately in the UI
+- The actual device state is confirmed on the next poll
+- If UI feels sluggish, check your network connection to the matrix
+
 ### Commands not responding
 - The matrix may need a brief delay between commands
-- Try reducing the polling interval if commands are being dropped
+- The integration includes automatic retries and rate limiting
+- If issues persist, try rebooting the matrix
 
 ## Contributing
 
