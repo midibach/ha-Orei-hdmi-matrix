@@ -1,6 +1,7 @@
 """Select platform for Orei HDMI Matrix."""
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from homeassistant.components.select import SelectEntity
@@ -10,6 +11,9 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
     DOMAIN,
+    EDID_ALL_OPTIONS,
+    EDID_ALL_OPTIONS_REVERSE,
+    EDID_COPY_OPTIONS,
     EDID_OPTIONS,
     EDID_OPTIONS_REVERSE,
     EXT_AUDIO_MODE_OPTIONS,
@@ -253,11 +257,19 @@ class OreiMatrixOutputHdrSelect(OreiMatrixOutputEntity, SelectEntity):
         hdr_value = hdr_settings.get(self._output_num, "Pass-through")
         
         if isinstance(hdr_value, str):
-            hdr_lower = hdr_value.lower()
-            for option in self._attr_options:
-                if option.lower() in hdr_lower or hdr_lower in option.lower():
-                    return option
+            hdr_norm = self._normalize(hdr_value)
+            # Check specific patterns
+            if "passthrough" in hdr_norm or "pass-through" in hdr_norm:
+                return "Pass-through"
+            if "hdrtosdr" in hdr_norm or "hdr-sdr" in hdr_norm or "hdr to sdr" in hdr_norm:
+                return "HDR to SDR"
+            if "auto" in hdr_norm or "followsink" in hdr_norm:
+                return "Auto (Follow Sink)"
         return "Pass-through"
+
+    def _normalize(self, value: str) -> str:
+        """Normalize string for comparison."""
+        return value.lower().replace(" ", "").replace("(", "").replace(")", "").replace("-", "")
 
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
@@ -291,7 +303,8 @@ class OreiMatrixInputEdidSelect(OreiMatrixInputEntity, SelectEntity):
     ) -> None:
         """Initialize the select."""
         super().__init__(coordinator, input_num, "edid", "EDID")
-        self._attr_options = list(EDID_OPTIONS.values())
+        # Include both preset options and copy from output options
+        self._attr_options = list(EDID_OPTIONS.values()) + list(EDID_COPY_OPTIONS.values())
         self._optimistic_option: str | None = None
 
     @property
@@ -306,10 +319,17 @@ class OreiMatrixInputEdidSelect(OreiMatrixInputEntity, SelectEntity):
         edid_value = edid_settings.get(self._input_num, "8K FRL12G HDR, 7.1CH")
         
         if isinstance(edid_value, str):
-            # Try to find matching option
-            for option in self._attr_options:
+            # Check for "copy from output X" pattern first
+            copy_match = re.search(r"copy\s*from\s*output\s*(\d+)", edid_value, re.IGNORECASE)
+            if copy_match:
+                output_num = int(copy_match.group(1))
+                return f"Copy from Output {output_num}"
+            
+            # Try to find matching preset option
+            for option in EDID_OPTIONS.values():
                 if self._edid_match(option, edid_value):
                     return option
+                    
         return "8K FRL12G HDR, 7.1CH"
 
     def _edid_match(self, option: str, value: str) -> bool:
@@ -327,13 +347,25 @@ class OreiMatrixInputEdidSelect(OreiMatrixInputEntity, SelectEntity):
         self._optimistic_option = option
         self.async_write_ha_state()
         
-        mode = EDID_OPTIONS_REVERSE.get(option, 36)
-        try:
-            await self.coordinator.async_set_input_edid(self._input_num, mode)
-        except Exception:
-            self._optimistic_option = None
-            self.async_write_ha_state()
-            raise
+        # Check if it's a "Copy from Output X" option
+        copy_match = re.search(r"Copy from Output (\d+)", option)
+        if copy_match:
+            output_num = int(copy_match.group(1))
+            try:
+                await self.coordinator.async_copy_edid(self._input_num, output_num)
+            except Exception:
+                self._optimistic_option = None
+                self.async_write_ha_state()
+                raise
+        else:
+            # Use preset mode
+            mode = EDID_OPTIONS_REVERSE.get(option, 36)
+            try:
+                await self.coordinator.async_set_input_edid(self._input_num, mode)
+            except Exception:
+                self._optimistic_option = None
+                self.async_write_ha_state()
+                raise
 
     @callback
     def _handle_coordinator_update(self) -> None:

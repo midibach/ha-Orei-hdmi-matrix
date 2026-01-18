@@ -90,7 +90,21 @@ EDID_OPTIONS: Final = {
 }
 
 # Reverse mapping for EDID
-EDID_OPTIONS_REVERSE: Final = {v: k for k, v in EDID_OPTIONS.items()}
+# EDID Copy from Output options (special modes)
+EDID_COPY_OPTIONS: Final = {
+    40: "Copy from Output 1",
+    41: "Copy from Output 2",
+    42: "Copy from Output 3",
+    43: "Copy from Output 4",
+    44: "Copy from Output 5",
+    45: "Copy from Output 6",
+    46: "Copy from Output 7",
+    47: "Copy from Output 8",
+}
+
+# Combined EDID options (presets + copy)
+EDID_ALL_OPTIONS: Final = {**EDID_OPTIONS, **EDID_COPY_OPTIONS}
+EDID_ALL_OPTIONS_REVERSE: Final = {v: k for k, v in EDID_ALL_OPTIONS.items()}
 
 # HDCP Options
 HDCP_OPTIONS: Final = {
@@ -174,8 +188,8 @@ IP_MODE_OPTIONS_REVERSE: Final = {v: k for k, v in IP_MODE_OPTIONS.items()}
 
 # Connection Status
 CONNECTION_STATUS: Final = {
-    "connect": "Connected",
-    "sync": "Syncing",
+    "sync": "Active",       # Signal synced and active
+    "connect": "Connected",  # Physically connected, no sync
     "disconnect": "Disconnected",
 }
 

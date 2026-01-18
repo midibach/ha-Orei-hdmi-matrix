@@ -318,11 +318,17 @@ class OreiMatrixAPI:
                 
                 _LOGGER.debug("Received response: %s", response[:200] if response else "empty")
                 
-                # Check for errors
-                if response.startswith("E0"):
-                    error_msg = f"Command error: {response}"
-                    _LOGGER.warning(error_msg)
-                    raise OreiMatrixCommandError(error_msg)
+                # Check for errors - E00 is success, E01+ are actual errors
+                # Strip E00 from response as it's just a success marker
+                if response.startswith("E00"):
+                    response = response[3:].lstrip("\r\n ")
+                elif response.startswith("E0") and len(response) > 2 and response[2].isdigit():
+                    # E01, E02, etc. are actual errors
+                    error_code = response[:3]
+                    if error_code != "E00":
+                        error_msg = f"Command error {error_code}: {response}"
+                        _LOGGER.warning(error_msg)
+                        raise OreiMatrixCommandError(error_msg)
                 
                 return response
                 
