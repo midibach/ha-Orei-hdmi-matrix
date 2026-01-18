@@ -318,11 +318,18 @@ class OreiMatrixAPI:
                 
                 _LOGGER.debug("Received response: %s", response[:200] if response else "empty")
                 
-                # Check for errors - E00, E01, etc. are error codes
-                if response.startswith("E0"):
-                    error_msg = f"Command error: {response}"
+                # Check for errors - E00/E01/etc are error codes BUT only if it's a short response
+                # In multi-line responses (like s status!), E00 appears as section dividers
+                response_stripped = response.strip()
+                if response_stripped.startswith("E0") and len(response_stripped) < 20:
+                    # Short response starting with E0x is likely an error
+                    error_msg = f"Command error: {response_stripped}"
                     _LOGGER.warning(error_msg)
                     raise OreiMatrixCommandError(error_msg)
+                
+                # Strip leading E00 section markers from multi-line responses
+                if response_stripped.startswith("E00"):
+                    response = response_stripped[3:].lstrip("\r\n ")
                 
                 return response
                 
@@ -813,6 +820,14 @@ class OreiMatrixAPI:
         lines = response.split("\n")
         for line in lines:
             line_lower = line.lower().strip()
+            
+            # Skip E00 section markers
+            if line_lower.startswith("e0") and len(line_lower) <= 3:
+                continue
+            
+            # Skip header line
+            if "get the unit all status" in line_lower:
+                continue
             
             # System settings
             if "power on" in line_lower:

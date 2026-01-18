@@ -183,46 +183,13 @@ class OreiMatrixCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _fetch_all_data(self) -> dict[str, Any]:
         """Fetch all data from the matrix using single 's status!' command."""
         # Start with last known data or defaults to avoid "Unknown" flickering
-        data = self._last_known_data.copy() if self._last_known_data else self._get_default_data()
+        if not self._last_known_data:
+            self._last_known_data = self._get_default_data()
 
         try:
             # Single command gets everything!
             full_status = await self.api.get_full_status()
-            
-            # Update all fields from the parsed status
-            if "power" in full_status:
-                data["power"] = full_status["power"]
-            if "beep" in full_status:
-                data["beep"] = full_status["beep"]
-            if "lock" in full_status:
-                data["lock"] = full_status["lock"]
-            
-            if full_status.get("routing"):
-                data["routing"] = full_status["routing"]
-            if full_status.get("input_status"):
-                data["input_status"].update(full_status["input_status"])
-            if full_status.get("output_status"):
-                data["output_status"].update(full_status["output_status"])
-            if full_status.get("output_hdcp"):
-                data["output_hdcp"].update(full_status["output_hdcp"])
-            if full_status.get("output_stream"):
-                data["output_stream"].update(full_status["output_stream"])
-            if full_status.get("output_scaler"):
-                data["output_scaler"].update(full_status["output_scaler"])
-            if full_status.get("output_hdr"):
-                data["output_hdr"].update(full_status["output_hdr"])
-            if full_status.get("output_arc"):
-                data["output_arc"].update(full_status["output_arc"])
-            if full_status.get("output_audio_mute"):
-                data["output_audio_mute"] = full_status["output_audio_mute"]
-            if full_status.get("input_edid"):
-                data["input_edid"].update(full_status["input_edid"])
-            if full_status.get("output_ext_audio"):
-                data["output_ext_audio"].update(full_status["output_ext_audio"])
-            if full_status.get("ext_audio_mode"):
-                data["ext_audio_mode"] = full_status["ext_audio_mode"]
-            if full_status.get("output_ext_audio_source"):
-                data["output_ext_audio_source"].update(full_status["output_ext_audio_source"])
+            self._update_data_from_status(full_status)
             
             # Store IP/network info for device info
             if full_status.get("mac_address"):
@@ -235,32 +202,81 @@ class OreiMatrixCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Keep last known data
 
         self._init_complete = True
-        return data
+        return self._last_known_data.copy()
 
     async def async_fetch_device_info(self) -> None:
-        """Fetch device information."""
+        """Fetch device information using consolidated status command."""
         try:
+            # Get model and firmware with quick dedicated commands
             model = await self.api.get_model()
             firmware = await self.api.get_firmware_version()
-            mac = await self.api.get_mac_address()
-            ip_config = await self.api.get_ip_config()
-
+            
+            # Get MAC and IP from full status (faster than separate calls)
+            full_status = await self.api.get_full_status()
+            
             self._device_info = {
                 "model": model or "Orei HDMI Matrix",
                 "firmware_version": firmware or "Unknown",
-                "mac_address": mac or ip_config.get("mac_address", ""),
-                "ip_config": ip_config,
+                "mac_address": full_status.get("mac_address", ""),
+                "ip_config": {
+                    "ip_mode": full_status.get("ip_mode", ""),
+                    "ip_address": full_status.get("ip_address", ""),
+                    "subnet_mask": full_status.get("subnet_mask", ""),
+                    "gateway": full_status.get("gateway", ""),
+                    "tcp_port": full_status.get("tcp_port", "8000"),
+                    "telnet_port": full_status.get("telnet_port", "23"),
+                },
             }
+            
+            # Also populate initial data from this status call
+            self._last_known_data = self._get_default_data()
+            self._update_data_from_status(full_status)
+            
             _LOGGER.debug("Device info: %s", self._device_info)
         except OreiMatrixError as err:
             _LOGGER.warning("Failed to fetch device info: %s", err)
-            # Set defaults so the integration still works
             self._device_info = {
                 "model": "Orei HDMI Matrix",
                 "firmware_version": "Unknown",
                 "mac_address": "",
                 "ip_config": {},
             }
+
+    def _update_data_from_status(self, full_status: dict[str, Any]) -> None:
+        """Update internal data from full status response."""
+        if "power" in full_status:
+            self._last_known_data["power"] = full_status["power"]
+        if "beep" in full_status:
+            self._last_known_data["beep"] = full_status["beep"]
+        if "lock" in full_status:
+            self._last_known_data["lock"] = full_status["lock"]
+        
+        if full_status.get("routing"):
+            self._last_known_data["routing"] = full_status["routing"]
+        if full_status.get("input_status"):
+            self._last_known_data["input_status"].update(full_status["input_status"])
+        if full_status.get("output_status"):
+            self._last_known_data["output_status"].update(full_status["output_status"])
+        if full_status.get("output_hdcp"):
+            self._last_known_data["output_hdcp"].update(full_status["output_hdcp"])
+        if full_status.get("output_stream"):
+            self._last_known_data["output_stream"].update(full_status["output_stream"])
+        if full_status.get("output_scaler"):
+            self._last_known_data["output_scaler"].update(full_status["output_scaler"])
+        if full_status.get("output_hdr"):
+            self._last_known_data["output_hdr"].update(full_status["output_hdr"])
+        if full_status.get("output_arc"):
+            self._last_known_data["output_arc"].update(full_status["output_arc"])
+        if full_status.get("output_audio_mute"):
+            self._last_known_data["output_audio_mute"] = full_status["output_audio_mute"]
+        if full_status.get("input_edid"):
+            self._last_known_data["input_edid"].update(full_status["input_edid"])
+        if full_status.get("output_ext_audio"):
+            self._last_known_data["output_ext_audio"].update(full_status["output_ext_audio"])
+        if full_status.get("ext_audio_mode"):
+            self._last_known_data["ext_audio_mode"] = full_status["ext_audio_mode"]
+        if full_status.get("output_ext_audio_source"):
+            self._last_known_data["output_ext_audio_source"].update(full_status["output_ext_audio_source"])
 
     async def async_fetch_names(self) -> bool:
         """Fetch port names from HTTP API."""
