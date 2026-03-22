@@ -1,8 +1,8 @@
 # Orei HDMI Matrix Integration for Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![GitHub Release](https://img.shields.io/github/release/midibach/ha-orei-matrix.svg)](https://github.com/midibach/ha-orei-matrix/releases)
-[![License](https://img.shields.io/github/license/midibach/ha-orei-matrix.svg)](LICENSE)
+[![GitHub Release](https://img.shields.io/github/release/midibach/ha-Orei-hdmi-matrix.svg)](https://github.com/midibach/ha-Orei-hdmi-matrix/releases)
+[![License](https://img.shields.io/github/license/midibach/ha-Orei-hdmi-matrix.svg)](LICENSE)
 
 A comprehensive Home Assistant custom integration for the **Orei BK-808 8x8 HDMI 2.1 Matrix** with audio extraction. This integration provides full control over your HDMI matrix via TCP/IP, including video routing, audio extraction, EDID management, CEC control, and more.
 
@@ -73,7 +73,7 @@ If your model has the "Over IP Function" feature, it likely uses the same comman
 1. Open HACS in Home Assistant
 2. Click the three dots in the top right corner
 3. Select "Custom repositories"
-4. Add this repository URL: `https://github.com/midibach/ha-orei-matrix`
+4. Add this repository URL: `https://github.com/midibach/ha-Orei-hdmi-matrix`
 5. Select "Integration" as the category
 6. Click "Add"
 7. Search for "Orei HDMI Matrix" and install

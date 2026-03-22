@@ -1,0 +1,7 @@
+{
+  "name": "Orei HDMI Matrix",
+  "homeassistant": "2024.1.0",
+  "render_readme": true,
+  "domains": ["switch", "select", "button", "sensor", "number", "text"],
+  "iot_class": "local_polling"
+}
