@@ -1,8 +1,8 @@
 # Orei HDMI Matrix Integration for Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![GitHub Release](https://img.shields.io/github/release/your-github-username/ha-orei-matrix.svg)](https://github.com/your-github-username/ha-orei-matrix/releases)
-[![License](https://img.shields.io/github/license/your-github-username/ha-orei-matrix.svg)](LICENSE)
+[![GitHub Release](https://img.shields.io/github/release/midibach/ha-orei-matrix.svg)](https://github.com/midibach/ha-orei-matrix/releases)
+[![License](https://img.shields.io/github/license/midibach/ha-orei-matrix.svg)](LICENSE)
 
 A comprehensive Home Assistant custom integration for the **Orei BK-808 8x8 HDMI 2.1 Matrix** with audio extraction. This integration provides full control over your HDMI matrix via TCP/IP, including video routing, audio extraction, EDID management, CEC control, and more.
 
@@ -54,9 +54,17 @@ A comprehensive Home Assistant custom integration for the **Orei BK-808 8x8 HDMI
 
 ## Supported Devices
 
-- **Orei BK-808** - 8x8 HDMI 2.1 Matrix with Audio Extraction
+- **Orei BK-808** - 8x8 HDMI 2.1 Matrix with Audio Extraction (confirmed working)
 
-This integration may work with other Orei matrices that use the same command protocol.
+### Other OREI Models
+
+This integration may work with other OREI HDMI matrices that support TCP/IP control. To check if your model is compatible:
+
+1. Go to the [OREI website](https://www.orei.com/) and find your product
+2. Look in the **Downloads** section for the **Specifications Sheet**
+3. Check if **"Over IP Function"** is listed in the specifications
+
+If your model has the "Over IP Function" feature, it likely uses the same command protocol and should work with this integration. If you try it with a different model, please report your results (success or failure) so we can update this compatibility list.
 
 ## Installation
 
@@ -65,7 +73,7 @@ This integration may work with other Orei matrices that use the same command pro
 1. Open HACS in Home Assistant
 2. Click the three dots in the top right corner
 3. Select "Custom repositories"
-4. Add this repository URL: `https://github.com/your-github-username/ha-orei-matrix`
+4. Add this repository URL: `https://github.com/midibach/ha-orei-matrix`
 5. Select "Integration" as the category
 6. Click "Add"
 7. Search for "Orei HDMI Matrix" and install
@@ -89,14 +97,14 @@ This integration may work with other Orei matrices that use the same command pro
 5. Optionally configure:
    - **Port** - TCP port (default: 8000)
    - **Name** - Friendly device name
-   - **Admin Password** - Web interface password (leave blank if not set)
 
 ### Options
 
 After setup, you can configure:
-- **Status update interval** - How often to poll the device (3-300 seconds, default: 15)
-  - Lower values = more responsive status updates but more network traffic
-  - Higher values = less network traffic but slower status sync
+- **Status update interval** - How often to poll the device (5-300 seconds, default: 10)
+  - Uses single efficient `s status!` command that returns all data
+  - Lower values = more responsive status updates
+  - Higher values = less network traffic
 - **Sync port names from device** - Automatically sync input/output names from the device's web interface (default: enabled)
 
 > **Note**: Control changes made in Home Assistant take effect immediately with optimistic updates, showing the expected state before confirmation from the device.
@@ -272,22 +280,99 @@ data:
   device_id: "your_device_id"
 ```
 
+## Automation Best Practices
+
+### Names vs Numbers - Stability Guarantee
+
+This integration is designed so that **automations never break when port names change**:
+
+| What | Uses | Stability |
+|------|------|-----------|
+| Entity IDs | Numbers | ✅ `select.orei_matrix_output_1_source` never changes |
+| Services | Numbers | ✅ `orei_matrix.set_routing` uses input/output numbers |
+| Entity Attributes | Numbers | ✅ `input_number`, `output_number` attributes always available |
+| UI Dropdowns | Names | 🎨 Cosmetic - shows "Apple TV" instead of "Input 1" |
+| Sensor Values | Names | 🎨 Cosmetic - shows friendly names in dashboard |
+
+### Recommended: Use Services with Numbers
+
+For automations, always use the services with numeric input/output values:
+
+```yaml
+# ✅ GOOD - Uses numbers, never breaks
+service: orei_matrix.set_routing
+data:
+  device_id: "your_device_id"
+  output: 1  # Living Room TV
+  input: 3   # Apple TV
+```
+
+```yaml
+# ⚠️ AVOID - Uses names, breaks if renamed
+service: select.select_option
+target:
+  entity_id: select.orei_matrix_output_1_source
+data:
+  option: "Apple TV"  # Breaks if renamed to "Apple TV 4K"
+```
+
+### Using Attributes in Conditions
+
+Entity attributes always expose stable numeric values:
+
+```yaml
+# ✅ GOOD - Uses input_number attribute
+condition: template
+value_template: "{{ state_attr('select.orei_matrix_output_1_source', 'input_number') == 3 }}"
+```
+
+```yaml
+# ⚠️ AVOID - Uses state which is the name
+condition: state
+entity_id: select.orei_matrix_output_1_source
+state: "Apple TV"
+```
+
+### Entity Attributes Reference
+
+| Entity Type | Attribute | Description |
+|-------------|-----------|-------------|
+| Output Source Select | `input_number` | Currently selected input (1-8) |
+| Output Source Select | `output_number` | This output's number (1-8) |
+| Output Source Select | `input_name` | Custom name of current input |
+| Output Source Select | `output_name` | Custom name of this output |
+| Current Source Sensor | `input_number` | Currently selected input (1-8) |
+| Current Source Sensor | `output_number` | This output's number (1-8) |
+
 ## Example Automations
 
-### Switch to Gaming PC when PS5 turns on
+### Switch to Input 3 when it connects (using numbers)
 ```yaml
 automation:
-  - alias: "Auto-switch to Gaming TV"
+  - alias: "Auto-switch to Input 3"
     trigger:
       - platform: state
-        entity_id: sensor.orei_matrix_input_1_status
+        entity_id: sensor.orei_matrix_input_3_status
         to: "Connected"
     action:
-      - service: select.select_option
-        target:
-          entity_id: select.orei_matrix_output_1_source
+      - service: orei_matrix.set_routing
         data:
-          option: "Input 1"
+          device_id: "your_device_id"
+          output: 1
+          input: 3
+```
+
+### Check current input using attribute
+```yaml
+automation:
+  - alias: "Notify when Living Room switches away from Apple TV"
+    trigger:
+      - platform: template
+        value_template: "{{ state_attr('select.orei_matrix_output_1_source', 'input_number') != 3 }}"
+    action:
+      - service: notify.mobile_app
+        data:
+          message: "Living Room TV switched away from Apple TV"
 ```
 
 ### Movie night preset with CEC
@@ -331,11 +416,27 @@ Ensure your matrix has a static IP address or DHCP reservation for reliable oper
 
 ## Troubleshooting
 
+### ImportError or "cannot import name" errors
+This usually means you have a mixed installation with old and new files. Do a clean reinstall:
+1. Stop Home Assistant
+2. Delete the entire `/config/custom_components/orei_matrix/` folder
+3. Extract the fresh zip file to `/config/custom_components/`
+4. Restart Home Assistant
+5. Re-add the integration
+
 ### Cannot connect to matrix
 - Verify the IP address is correct
 - Ensure port 8000 is not blocked by firewall
 - Check that the matrix is powered on and connected to the network
-- Try accessing the matrix via Telnet to verify connectivity
+- Try accessing the matrix via Telnet to verify connectivity: `telnet <ip> 8000`
+- **For non-BK-808 models**: Verify your model has "Over IP Function" in its specifications (see [Supported Devices](#supported-devices))
+
+### Unsupported model
+If you get connection errors with a non-BK-808 OREI matrix:
+1. Check if your model has "Over IP Function" listed in the [OREI product specifications](https://www.orei.com/)
+2. Verify the device uses port 8000 (some models may use different ports)
+3. Try connecting via Telnet to see if it responds to commands
+4. Report your findings on GitHub so we can update compatibility information
 
 ### Entities show unavailable
 - Check network connectivity
